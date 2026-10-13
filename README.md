@@ -1,6 +1,6 @@
 <div align="center">
 
-# FssAdmin
+# FssAdmin (golang版)
 
 基于 [GoFrame](https://goframe.org) 的企业级中后台：**一套 REST API + 两套 Vue 3 前台**。
 
