@@ -1,0 +1,19 @@
+# GoFrame CLI. Do not commit real passwords; override locally if needed.
+gfcli:
+  gen:
+    dao:
+      - link: "mysql:root:root@tcp(127.0.0.1:3306)/fssoa-net"
+        tables: "sa_system_user,sa_system_role,sa_system_menu,sa_system_dept,sa_system_post,sa_system_tenant,sa_system_dict_type,sa_system_dict_data,sa_system_config,sa_system_config_group,sa_system_attachment,sa_system_category,sa_system_login_log,sa_system_oper_log,sa_system_mail,sa_system_notice,sa_article,platform_video,platform_video_download,task_node,task_job,sa_tool_crontab,sa_tool_crontab_log,sa_tool_generate_tables,sa_tool_generate_columns"
+        descriptionTag: true
+        jsonCase: "snake"
+        daoPath: "internal/generated/dao"
+        doPath: "internal/generated/model/do"
+        entityPath: "internal/generated/model/entity"
+  build:
+    name: "fssadmin-goframe"
+    arch: "amd64"
+    system: "windows,linux"
+    path: "./bin"
+    packSrc: "manifest/config,resource"
+    version: "v0.1.0"
+    extra: ""

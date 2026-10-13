@@ -1,0 +1,117 @@
+# GoFrame runtime config. Secrets should come from env in production.
+server:
+  address: "127.0.0.1:8787"
+  openapiPath: "/api.json"
+  swaggerPath: "/docs"
+  serverRoot: "resource/public"
+  # 关闭路由表打印：启动自检信息已包含关键配置，避免刷屏
+  dumpRouterMap: false
+  # WebServer 自己的 access/error 日志，和下面的 logger 业务日志不是同一套。
+  # https://goframe.org/docs/web/senior-logging
+  logPath: "logs/server"
+  logStdout: false
+  errorStack: true
+  errorLogEnabled: true
+  errorLogPattern: "error.{Ymd}.log"
+  accessLogEnabled: true
+  accessLogPattern: "access.{Ymd}.log"
+  maxHeaderBytes: "20KB"
+  clientMaxBodySize: "64MB"
+  graceful: true
+  gracefulTimeout: 10
+
+# GoFrame 自带 glog（g.Log）。不是第三方日志库。
+# level: all 打开调试；prod / error 只留告警和错误。
+# stStatus: 1 时 Error、Warning 打印调用堆栈；0 关闭。
+# 也可用代码 g.Log().SetDebug / SetStack，启动时按 app.debug 和这里的 stStatus 再设一次。
+logger:
+  level: "all"
+  stdout: true
+  path: "logs"
+  file: "{Y-m-d}.log"
+  stStatus: 1
+  # 日志滚动：单文件超过 rotateSize 自动分割（支持 10MB / 512KB 写法）
+  rotateSize: "10MB"
+  # 最多保留的滚动备份文件数
+  rotateBackupLimit: 30
+  # 滚动备份的保留时长（720h = 30 天）
+  rotateBackupExpire: "720h"
+  # 过期备份的检查间隔
+  rotateCheckInterval: "1h"
+
+database:
+  default:
+    type: "mysql"
+    link: "mysql:root:root@tcp(127.0.0.1:3306)/fssoa-net?charset=utf8mb4&parseTime=true&loc=Asia%2FShanghai"
+    debug: false
+    charset: "utf8mb4"
+    maxIdle: 10
+    maxOpen: 30
+    maxLifetime: "30m"
+
+redis:
+  default:
+    address: "127.0.0.1:6379"
+    db: 4
+    pass: ""
+    idleTimeout: "60s"
+    maxActive: 50
+
+# Redis 连接本身没有过期时间。TTL 写在每个 key 上（gcache.Set 的 duration / SETEX）。
+# 见 https://goframe.org/docs/core/gcache-redis
+cache:
+  expire: 3600
+  prefix: "cache"
+
+app:
+  name: "FssAdmin"
+  version: "0.1.0"
+  timezone: "Asia/Shanghai"
+  debug: true
+  # 演示模式：为 true 时启动调度会自动启用「数据库还原」节点（每小时用 restoreFile 覆盖库并 FLUSHDB）
+  demoEnable: true
+  captchaEnable: true
+  captchaExpire: 600
+  secretKey: "vgb0tnl9d58+6n-6h-ea&u^1#s0ccp!794=krylxcjq75vzps$"
+  jwtAlg: "HS256"
+  accessTTL: 7200
+  refreshTTL: 43200
+  sessionType: "jwt"
+  tokenSliding: true
+  gzipEnable: true
+  corsEnable: true
+  corsMaxAge: 600
+  corsOrigins: "http://localhost:5173,http://localhost:3000,http://localhost:4060,http://localhost:5730"
+  csrfEnable: true
+  xssEnable: true
+  uploadDir: "static/upload"
+  # 附件对外访问：磁盘仍是 uploadDir；URL = uploadDomain + uploadPublicPrefix + /年/月/日/文件名
+  # 域名留空则返回相对路径（随当前站点走，适合 Apache 反代）。
+  uploadDomain: ""
+  # Apache 示例：ProxyPass /profile/static/upload http://127.0.0.1:8787/profile/static/upload
+  uploadPublicPrefix: "/profile/static/upload"
+  videoDir: "static/videos"
+  backupDir: "static/bakup"
+  backupCron: "0 0 2 * * *"
+  # 演示环境还原脚本（database_restore 任务使用）
+  restoreFile: "static/restore/init.sql"
+  maxFileSize: 10485760
+  schedulerEnable: true
+  # 定时任务 shell_command 类型：允许在服务器执行 Shell 命令。置 false 可整体禁用该任务类型。
+  shellTaskEnable: true
+  # IP 归属地（登录日志、在线用户「登录地点」）：
+  # 开启后仅对公网 IP 请求外网接口查询，结果缓存；关闭后只标注「内网IP/未解析(已关闭归属地查询)」
+  ipLocationEnable: false
+  # 归属地缓存时长（小时），IP 属地几乎不变，默认 7 天
+  ipLocationCacheHours: 168
+  # 单次外网归属地查询的硬超时（秒），避免拖慢登录
+  ipLocationTimeout: 3
+  rateLimitEnable: true
+  rateLimitTimes: 1000
+  rateLimitSeconds: 60
+  rateLimitPrefix: "fssadmin:rl:"
+  ipWhiteList: ""
+  ipBlackList: ""
+#ipWhiteList: "127.0.0.1,::1,10.0.0.0/8"
+#ipBlackList: "1.2.3.4,5.6.7.0/24"
+  tenantWhitelist: "/system/auth/,/health,/common/health,/core/captcha,/core/login,/core/tenants-by-username,/core/config/public/"

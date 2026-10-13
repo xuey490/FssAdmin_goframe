@@ -1,0 +1,30 @@
+package contract
+
+// APIPaths is the frozen frontend+backend union used for contract tests.
+var APIPaths = []string{
+	"GET /core/captcha",
+	"POST /core/login",
+	"POST /core/refresh",
+	"POST /core/logout",
+	"GET /core/system/user",
+	"GET /core/system/menu",
+	"GET /core/system/dictAll",
+	"GET /system/user/list",
+	"GET /system/role/list",
+	"GET /system/menu/list",
+	"GET /system/dept/list",
+	"GET /system/post/list",
+	"GET /system/tenant/list",
+	"GET /system/dict/type/list",
+	"GET /core/config/list",
+	"GET /system/attachment/list",
+	"GET /article/list",
+	"GET /platform/video/list",
+	"GET /monitor/online/list",
+	"GET /core/server/monitor",
+	"GET /task/cronjob/node/list",
+	"GET /tool/crontab/list",
+	"GET /tool/code/index",
+	"GET /health",
+	"GET /ws/ai",
+}

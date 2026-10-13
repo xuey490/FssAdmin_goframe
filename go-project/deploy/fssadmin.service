@@ -1,0 +1,39 @@
+[Unit]
+Description=FssAdmin GoFrame API (go-project)
+Documentation=file:/opt/fssadmin/deploy/Install.md
+# 列出的 unit 不存在时 systemd 会忽略，跨发行版可共用一份
+After=network-online.target mysqld.service mysql.service mariadb.service redis.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fssadmin
+Group=fssadmin
+
+# 必须是部署根目录：manifest/config、resource、static、logs 全部按相对路径解析
+WorkingDirectory=/opt/fssadmin
+ExecStart=/opt/fssadmin/fssadmin
+
+# 显式指定配置文件（同时也覆盖打包进二进制的内嵌配置）
+Environment=GF_GCFG_FILE=/opt/fssadmin/manifest/config/config.yaml
+# yt-dlp 绝对路径，避免 path 探测失败后触发联网自动下载
+Environment=FSSADMIN_YTDLP_BIN=/usr/local/bin/yt-dlp
+# systemd 默认 PATH 不含 /usr/local/bin，缺了会导致 yt-dlp / mysqldump 找不到
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=LANG=zh_CN.UTF-8
+
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+LimitNOFILE=65535
+NoNewPrivileges=true
+PrivateTmp=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=fssadmin
+
+[Install]
+WantedBy=multi-user.target
