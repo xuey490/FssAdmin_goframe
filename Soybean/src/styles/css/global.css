@@ -1,0 +1,55 @@
+@import './reset.css';
+@import './nprogress.css';
+@import './transition.css';
+
+html,
+body,
+#app {
+  height: 100%;
+  font-size: 14px;
+}
+
+html {
+  overflow-x: hidden;
+}
+
+/* ElMessage: viewport-center, opaque. Theme sets --el-color-*-light-9 at 10% alpha, so the
+   default top toast paints over header tabs and the green text is unreadable. */
+.el-message {
+  top: 50% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%);
+  background-color: var(--el-bg-color) !important;
+  border: 1px solid var(--el-border-color-lighter) !important;
+  box-shadow:
+    0 6px 16px rgba(0, 0, 0, 0.08),
+    0 3px 6px -4px rgba(0, 0, 0, 0.12),
+    0 9px 28px 8px rgba(0, 0, 0, 0.05) !important;
+  z-index: 4000 !important;
+}
+
+.el-message--success {
+  background-color: color-mix(in srgb, var(--el-color-success) 12%, var(--el-bg-color)) !important;
+  border-color: color-mix(in srgb, var(--el-color-success) 28%, var(--el-bg-color)) !important;
+}
+
+.el-message--warning {
+  background-color: color-mix(in srgb, var(--el-color-warning) 12%, var(--el-bg-color)) !important;
+  border-color: color-mix(in srgb, var(--el-color-warning) 28%, var(--el-bg-color)) !important;
+}
+
+.el-message--error {
+  background-color: color-mix(in srgb, var(--el-color-danger) 12%, var(--el-bg-color)) !important;
+  border-color: color-mix(in srgb, var(--el-color-danger) 28%, var(--el-bg-color)) !important;
+}
+
+.el-message--info {
+  background-color: color-mix(in srgb, var(--el-color-info) 12%, var(--el-bg-color)) !important;
+  border-color: color-mix(in srgb, var(--el-color-info) 28%, var(--el-bg-color)) !important;
+}
+
+.el-message.el-message-fade-enter-from,
+.el-message.el-message-fade-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.92);
+}

@@ -1,0 +1,189 @@
+<script setup lang="ts">
+import { ref, reactive, onMounted } from 'vue';
+import avatar1 from '@/assets/images/dashboard/avatar/avatar1.webp';
+import avatar2 from '@/assets/images/dashboard/avatar/avatar2.webp';
+import avatar3 from '@/assets/images/dashboard/avatar/avatar3.webp';
+import avatar4 from '@/assets/images/dashboard/avatar/avatar4.webp';
+import avatar5 from '@/assets/images/dashboard/avatar/avatar5.webp';
+import avatar6 from '@/assets/images/dashboard/avatar/avatar6.webp';
+
+defineOptions({ name: 'DashboardConsoleNewUser' });
+
+interface UserTableItem {
+  username: string;
+  province: string;
+  sex: 0 | 1;
+  age: number;
+  percentage: number;
+  pro: number;
+  color: string;
+  avatar: string;
+}
+
+const ANIMATION_DELAY = 100;
+
+const radio2 = ref('本月');
+
+const tableData = reactive<UserTableItem[]>([
+  {
+    username: '中小鱼',
+    province: '北京',
+    sex: 0,
+    age: 22,
+    percentage: 60,
+    pro: 0,
+    color: 'var(--el-color-primary)',
+    avatar: avatar1
+  },
+  {
+    username: '何小荷',
+    province: '深圳',
+    sex: 1,
+    age: 21,
+    percentage: 20,
+    pro: 0,
+    color: 'var(--el-color-success)',
+    avatar: avatar2
+  },
+  {
+    username: '誶誶淰',
+    province: '上海',
+    sex: 1,
+    age: 23,
+    percentage: 60,
+    pro: 0,
+    color: 'var(--el-color-warning)',
+    avatar: avatar3
+  },
+  {
+    username: '发呆草',
+    province: '长沙',
+    sex: 0,
+    age: 28,
+    percentage: 50,
+    pro: 0,
+    color: 'var(--el-color-info)',
+    avatar: avatar4
+  },
+  {
+    username: '甜筒',
+    province: '浙江',
+    sex: 1,
+    age: 26,
+    percentage: 70,
+    pro: 0,
+    color: 'var(--el-color-danger)',
+    avatar: avatar5
+  },
+  {
+    username: '冷月呆呆',
+    province: '湖北',
+    sex: 1,
+    age: 25,
+    percentage: 90,
+    pro: 0,
+    color: 'var(--el-color-success)',
+    avatar: avatar6
+  }
+]);
+
+function addAnimation(): void {
+  setTimeout(() => {
+    tableData.forEach(item => {
+      item.pro = item.percentage;
+    });
+  }, ANIMATION_DELAY);
+}
+
+onMounted(() => {
+  addAnimation();
+});
+</script>
+
+<template>
+  <ElCard class="card-wrapper new-user" shadow="never">
+    <template #header>
+      <div class="new-user__header">
+        <div>
+          <h4 class="new-user__title">新用户</h4>
+          <p class="new-user__subtitle">
+            这个月增长<span class="text-success">+20%</span>
+          </p>
+        </div>
+        <ElRadioGroup v-model="radio2">
+          <ElRadioButton value="本月" label="本月" />
+          <ElRadioButton value="上月" label="上月" />
+          <ElRadioButton value="今年" label="今年" />
+        </ElRadioGroup>
+      </div>
+    </template>
+
+    <ElTable
+      :data="tableData"
+      style="width: 100%"
+      size="large"
+      :border="false"
+      :stripe="false"
+      :header-cell-style="{ background: 'transparent' }"
+    >
+      <ElTableColumn label="头像" prop="avatar" width="150">
+        <template #default="{ row }">
+          <div class="flex items-center">
+            <img class="size-36px rounded-lg object-cover" :src="row.avatar" alt="avatar" />
+            <span class="ml-8px">{{ row.username }}</span>
+          </div>
+        </template>
+      </ElTableColumn>
+      <ElTableColumn label="地区" prop="province" />
+      <ElTableColumn label="性别">
+        <template #default="{ row }">
+          <span>{{ row.sex === 1 ? '男' : '女' }}</span>
+        </template>
+      </ElTableColumn>
+      <ElTableColumn label="进度" width="240">
+        <template #default="{ row }">
+          <ElProgress
+            :percentage="row.pro"
+            :color="row.color"
+            :stroke-width="4"
+            :aria-label="`${row.username}的完成进度: ${row.pro}%`"
+          />
+        </template>
+      </ElTableColumn>
+    </ElTable>
+  </ElCard>
+</template>
+
+<style scoped lang="scss">
+.new-user {
+  height: 512px;
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+
+.new-user__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.new-user__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.new-user__subtitle {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+
+.new-user {
+  :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+    color: var(--el-color-primary) !important;
+    background: transparent !important;
+  }
+}
+</style>

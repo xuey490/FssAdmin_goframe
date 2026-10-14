@@ -1,0 +1,194 @@
+
+
+ 【云服务器】请在安全组放行 40985 端口
+ 外网ipv4面板地址: https://103.140.239.254:40985/43bd879b
+ 内网面板地址:     https://103.140.239.254:40985/43bd879b
+ username: xisrsvsk
+ password: Fslks2023
+
+Notice: pcntl_signal_dispatch,pcntl_signal,pcntl_alarm,pcntl_fork,pcntl_wait,proc_open,shell_exec,exec,putenv are disabled by disable_functions. 
+Please remove them from disable_functions in /www/server/php/84/etc/php-cli.ini
+
+
+
+
+cyl831219@gmail.com
+
+./configure --prefix=/usr/local/apache2 \
+            --enable-so \
+            --enable-ssl \
+            --enable-rewrite=shared \
+            --enable-deflate=shared \
+            --enable-mods-shared=most
+
+
+
+./configure \
+    --prefix=/usr/local/apache2 \
+    --enable-so \
+    --enable-ssl \
+    --enable-rewrite=shared \          # 把 rewrite 编成动态模块
+    --enable-deflate=shared \          # 把 gzip 压缩编成动态模块
+    --with-apr=/usr/bin/apr-1-config \
+    --with-apr-util=/usr/bin/apu-1-config
+
+./acme.sh --issue -d kan8.net -d www.kan8.net --dns \ 
+ --yes-I-know-dns-manual-mode-enough-go-ahead-please
+
+
+
+
+
+不要动网页，一边去玩
+ez+
+https://www.dynadot.com/zh/   2580 pin
+http://ffzy.tv/
+http://www.dy1234.net/
+
+https://dbzy.com/vodtype/1.html?ac=detail
+
+https://www.98dou.cn/4961.html
+
+https://dbzy.com/vodtype/1.html?ac=detail
+
+https://www.iycms.com/index.html
+
+
+https://mtzy6.com/help/index.html
+
+https://www.iqzywang.cc/
+
+https:\/\/quan.pw\/?url=
+https://jx.789jiexi.net:4433//?url=
+
+
+https://www.dppbk.com/maccms
+
+bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/yonggekkk/x-ui-yg/main/install.sh)
+ash <(curl -Ls https://raw.githubusercontent.com/xeefei/3x-ui/master/install.sh)
+----------------------------------
+腾讯云
+微信扫码
+43.163.209.110
+root
+Fslks_2023!&@#
+
+外网面板地址: https://43.163.209.110:11137/fea5834d
+内网面板地址: https://10.7.0.5:11137/fea5834d
+|-用户名: pk4u94ud
+|-新密码: Fslks_2023
+
+dpkg-reconfigure tzdata
+
+
+x-ui登录信息如下：
+登录用户名: 40138b
+登录密码: a9be6c
+登录端口: 12053
+登录根路径: /6fc/
+登录地址(裸IP泄露模式-非安全)：http://43.163.209.110:12053/6fc/
+登录地址(域名加密模式-安全)：https://tt.fssoa.com:12053/6fc/
+
+
+
+---------------------------------
+阿里云
+39.108.235.110：22 root Fslks_2023!@#
+
+ 【云服务器】请在安全组放行 19716 端口
+ 外网ipv4面板地址: https://39.108.235.110:19716/8e4a534a
+ 内网面板地址:     https://172.19.28.61:19716/8e4a534a
+ username: prrraj96
+ password: FFslks_2023
+
+
+
+
+
+
+https://www.cilixian.org/loginX.php/admin/index/index.html
+admin
+Chen6800520217
+
+
+
+-----------------
+https://www.ufovps.com/
+pearphp@gmail.com
+Fslks_2023
+
+root
+21gas3d2023G
+
+香港
+
+ 小皮面板安装成功
+
+ 面板版本: v1.3.25
+ 外网面板地址: http://103.140.239.254:37412/2f918b
+ 内网面板地址: http://103.140.239.254:37412/2f918b
+ 面板账号: e6380394
+ 面板密码: 294cba69
+
+=========================面板注意事项===========================
+
+ 【云服务器】请在安全组放行37412端口
+ 面板工具命令： xp
+
+
+
+-----------------
+https://www.racknerd.com/
+23.94.201.70 2026年11月26日过期
+pearphp@gmail.com
+Fslks_2023
+
+外网面板地址: https://23.94.201.70:23869/d9a053e1
+内网面板地址: https://23.94.201.70:23869/d9a053e1
+|-用户名: iebozvpd
+|-新密码: Fslks_2023
+
+root
+cJmVs3S604CuM4vJ9z
+
+
+port（端口号）: 2053
+用户名: ctKBJe6n
+密  码: zMmdyWhc
+访问路径: gTjhSM6yFD
+
+面板 IPv4 访问地址------>> http://23.94.201.70:2053/gTjhSM6yFD
+
+VERSION=v2.4.0 && bash <(curl -Ls "https://raw.githubusercontent.com/xeefei/3x-ui/$VERSION/install.sh") $VERSION
+
+------------
+https://bwh81.net/
+80392625@qq.com  2026-03-06过期
+Fslks_2023!@#
+
+root
+98.142.143.249:28636
+root
+TNmR5C5uA2MN
+
+面板地址: http://98.142.143.249:36838/ghost
+面板用户：adminx
+面板密码：Fslks_2023
+
+外网ipv4面板地址: https://98.142.143.249:37570/765ad008
+内网面板地址:     https://98.142.143.249:37570/765ad008
+|-用户名: fjhxaver
+|-新密码: Fslks_2023
+
+
+登录用户名: fKoe1PF6sX
+登录密码: L022GQHT8E
+登录端口: 57715
+登录根路径: /uslRALI7dDs6Jbh/
+登录地址(裸IP泄露模式-非安全)：http://98.142.143.249:57715/uslRALI7dDs6Jbh/
+
+
+bash <(curl -Ls https://raw.githubusercontent.com/xeefei/3x-ui/master/install.sh)
+ bash <(curl -Ls https://raw.githubusercontent.com/yonggekkk/x-ui-yg/main/install.sh)
+
