@@ -17,6 +17,7 @@ import (
 	"fssadmin/go-project/internal/shared/reqx"
 	"fssadmin/go-project/internal/shared/response"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 	"github.com/gogf/gf/v2/util/gconv"
@@ -36,7 +37,49 @@ func List(r *ghttp.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return response.PageNo(dbx.ToMaps(rows), total, pg, limit), nil
+	items := dbx.ToMaps(rows)
+	attachJobsByActiveID(items)
+	return response.PageNo(items, total, pg, limit), nil
+}
+
+func fillJobFields(item map[string]interface{}, job gdb.Record) {
+	if job.IsEmpty() {
+		return
+	}
+	item["active_job_status"] = job["status"].Int()
+	item["job_status"] = job["status"].Int()
+	item["job_progress"] = job["progress"].Float64()
+	item["job_speed"] = job["speed"].String()
+	item["job_mode"] = job["mode"].String()
+	item["job_error_msg"] = job["error_msg"].String()
+	item["job_local_dir"] = job["local_dir"].String()
+}
+
+func jobsByID(ids []int) map[int]gdb.Record {
+	out := map[int]gdb.Record{}
+	if len(ids) == 0 {
+		return out
+	}
+	rows, _ := dao.JobModel().WhereIn("id", ids).All()
+	for _, j := range rows {
+		out[j["id"].Int()] = j
+	}
+	return out
+}
+
+func attachJobsByActiveID(items []map[string]interface{}) {
+	ids := make([]int, 0, len(items))
+	for _, it := range items {
+		if id := gconv.Int(it["active_job_id"]); id > 0 {
+			ids = append(ids, id)
+		}
+	}
+	byID := jobsByID(ids)
+	for _, it := range items {
+		if job, ok := byID[gconv.Int(it["active_job_id"])]; ok {
+			fillJobFields(it, job)
+		}
+	}
 }
 
 func Progress(r *ghttp.Request) (interface{}, error) {
@@ -48,6 +91,13 @@ func Progress(r *ghttp.Request) (interface{}, error) {
 		return []g.Map{}, nil
 	}
 	videos, _ := dao.Model().WhereIn("id", ids).All()
+	jids := make([]int, 0, len(videos))
+	for _, v := range videos {
+		if id := v["active_job_id"].Int(); id > 0 {
+			jids = append(jids, id)
+		}
+	}
+	byID := jobsByID(jids)
 	out := []g.Map{}
 	for _, v := range videos {
 		item := g.Map{
@@ -58,18 +108,8 @@ func Progress(r *ghttp.Request) (interface{}, error) {
 			"error_msg": v["error_msg"].String(), "active_job_id": v["active_job_id"].Int(),
 			"local_dir": v["local_dir"].String(),
 		}
-		jid := v["active_job_id"].Int()
-		if jid > 0 {
-			job, _ := dao.JobModel().Where("id", jid).One()
-			if !job.IsEmpty() {
-				item["active_job_status"] = job["status"].Int()
-				item["job_status"] = job["status"].Int()
-				item["job_progress"] = job["progress"].Float64()
-				item["job_speed"] = job["speed"].String()
-				item["job_mode"] = job["mode"].String()
-				item["job_error_msg"] = job["error_msg"].String()
-				item["job_local_dir"] = job["local_dir"].String()
-			}
+		if job, ok := byID[v["active_job_id"].Int()]; ok {
+			fillJobFields(item, job)
 		}
 		out = append(out, item)
 	}

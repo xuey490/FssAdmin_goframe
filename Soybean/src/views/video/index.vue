@@ -57,7 +57,8 @@ const progressStatus = (row: any) => {
   return undefined;
 };
 
-const isBestDownloading = (row: any) => row.job_mode === 'best' && [0, 1, 2].includes(Number(row.job_status));
+const isJobActive = (row: any) =>
+  Number(row.active_job_id) > 0 && [0, 1, 2].includes(Number(row.job_status ?? row.active_job_status));
 
 const {
   columns,
@@ -131,7 +132,7 @@ const {
       label: '下载进度',
       minWidth: 180,
       formatter: (row: any) =>
-        row.job_mode === 'best' && row.job_progress != null ? (
+        Number(row.active_job_id) > 0 ? (
           <div class="job-cell">
             <ElProgress
               percentage={Math.min(100, Math.round(Number(row.job_progress || 0)))}
@@ -200,12 +201,12 @@ const {
 
 const { checkedRowKeys } = useTableOperate(data, 'id', getData);
 
-const needPoll = () => (data.value || []).some((r: any) => Number(r.status) === 0 || isBestDownloading(r));
+const needPoll = () => (data.value || []).some((r: any) => Number(r.status) === 0 || isJobActive(r));
 
 async function pollProgressOnly() {
   if (polling) return;
   const rows = (data.value || []) as any[];
-  const watchIds = rows.filter(r => Number(r.status) === 0 || isBestDownloading(r)).map(r => r.id);
+  const watchIds = rows.filter(r => Number(r.status) === 0 || isJobActive(r)).map(r => r.id);
   if (!watchIds.length) {
     if (pollTimer) {
       clearInterval(pollTimer);
@@ -253,7 +254,10 @@ function setupPoll() {
     clearInterval(pollTimer);
     pollTimer = null;
   }
-  if (needPoll()) pollTimer = setInterval(pollProgressOnly, 2000);
+  if (needPoll()) {
+    pollProgressOnly();
+    pollTimer = setInterval(pollProgressOnly, 2000);
+  }
 }
 
 watch(

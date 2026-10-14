@@ -188,6 +188,7 @@ func startDownload(jobID, videoID int, url, mode string, opts map[string]interfa
 	_, _ = dao.Model().Where("id", videoID).Data(g.Map{
 		"active_job_id": jobID, "local_dir": dir, "update_time": dbx.Now(),
 	}).Update()
+	g.Log().Infof(ctx, "[video-dl job=%d video=%d] start", jobID, videoID)
 	go parseProgress(jobID, io.MultiReader(stdout, stderr))
 	err = cmd.Wait()
 	jobsMu.Lock()
@@ -195,12 +196,16 @@ func startDownload(jobID, videoID int, url, mode string, opts map[string]interfa
 	jobsMu.Unlock()
 	cancel()
 	if ctx.Err() == context.Canceled {
+		fmt.Fprintf(os.Stderr, "\r[video-dl job=%d] canceled\n", jobID)
 		return
 	}
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "\r[video-dl job=%d] fail %s\n", jobID, err)
 		failJob(jobID, videoID, err.Error())
 		return
 	}
+	fmt.Fprintf(os.Stderr, "\r[video-dl job=%d] 100.0%% done\n", jobID)
+	g.Log().Infof(ctx, "[video-dl job=%d] 100%% done", jobID)
 	_, _ = dao.JobModel().Where("id", jobID).Data(g.Map{
 		"status": 3, "progress": 100, "finished_at": dbx.Now(), "update_time": dbx.Now(),
 	}).Update()
@@ -211,6 +216,8 @@ func startDownload(jobID, videoID int, url, mode string, opts map[string]interfa
 
 func parseProgress(jobID int, r io.Reader) {
 	sc := bufio.NewScanner(r)
+	lastPct := -1
+	var lastPrint time.Time
 	for sc.Scan() {
 		line := sc.Text()
 		prog := 0.0
@@ -224,6 +231,18 @@ func parseProgress(jobID int, r io.Reader) {
 		data := g.Map{"update_time": dbx.Now()}
 		if prog > 0 {
 			data["progress"] = prog
+			pct := int(prog)
+			now := time.Now()
+			// ponytail: \r 同行刷新；1% 或 300ms 节流，避免刷屏
+			if pct != lastPct || now.Sub(lastPrint) >= 300*time.Millisecond {
+				lastPct = pct
+				lastPrint = now
+				if speed != "" {
+					fmt.Fprintf(os.Stderr, "\r[video-dl job=%d] %5.1f%%  %s    ", jobID, prog, speed)
+				} else {
+					fmt.Fprintf(os.Stderr, "\r[video-dl job=%d] %5.1f%%         ", jobID, prog)
+				}
+			}
 		}
 		if speed != "" {
 			data["speed"] = speed

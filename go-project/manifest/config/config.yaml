@@ -69,7 +69,7 @@ app:
   timezone: "Asia/Shanghai"
   debug: true
   # 演示模式：为 true 时启动调度会自动启用「数据库还原」节点（每小时用 restoreFile 覆盖库并 FLUSHDB）
-  demoEnable: true
+  demoEnable: false
   captchaEnable: true
   captchaExpire: 600
   secretKey: "vgb0tnl9d58+6n-6h-ea&u^1#s0ccp!794=krylxcjq75vzps$"

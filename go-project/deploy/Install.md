@@ -1,14 +1,15 @@
 # FssAdmin (go-project) Linux 部署手册
 
-适用对象：把 `go-project`（GoFrame 2.10 + MySQL + Redis 的纯 Go 后端）部署到 Linux 服务器，并由 Nginx 对外提供前端与 API 服务。
+适用对象：把 `go-project`（GoFrame 2.10 + MySQL + Redis 的纯 Go 后端）部署到 Linux 服务器，并由 Nginx 或 Apache 对外提供前端与 API 服务。
 
 本目录文件：
 
 | 文件 | 说明 |
 | --- | --- |
 | `deploy.sh` | 一键/分步部署脚本（装依赖、建库导入、生成配置、装服务、配 Nginx、健康检查） |
-| `fssadmin.service` | systemd 服务单元 |
+| `fssadmin.service` | systemd 服务单元（含 `FSSADMIN_YTDLP_BIN`） |
 | `nginx-fssadmin.conf` | Nginx 反代 + 前端站点配置模板（占位符由 `deploy.sh` 渲染） |
+| `apache-fssadmin.conf` | Apache 反代模板（手工部署；视频进度走 HTTP 轮询，不是 WebSocket） |
 | `Install.md` | 本文档 |
 
 ---
@@ -16,7 +17,7 @@
 ## 1. 架构与组件清单
 
 ```
-浏览器 ──80/443──▶ Nginx ──/api、/core、/ws ──▶ 127.0.0.1:8181 (fssadmin)
+浏览器 ──80/443──▶ Nginx 或 Apache ──/api、/core、/ws ──▶ 127.0.0.1:8181 (fssadmin)
                      │                              ├── MySQL 127.0.0.1:3306  fssoa-net
                      └── 前端 dist（/var/www/fssadmin）  ├── Redis 127.0.0.1:6379  db=4
                                                         ├── yt-dlp + ffmpeg（视频模块）
@@ -29,7 +30,7 @@
 | MySQL | 5.7 或 8.0（dump 来源 5.7.26） | 业务库 `fssoa-net` | 是 |
 | Redis | 5.0+ | 缓存、验证码、限流（配置为 **db 4**） | 是 |
 | mysql 客户端 | 与 MySQL 同版本 | `mysqldump`，缺失时备份降级为纯 SQL 导出 | 建议 |
-| Nginx | 1.20+ | 反代、前端静态、WebSocket | 是 |
+| Nginx 1.20+ 或 Apache 2.4+ | 反代、前端静态；`/ws` 才需要 WebSocket | 二选一 |
 | systemd | 系统自带 | 守护进程、开机自启 | 是 |
 | yt-dlp | 最新 | 视频解析/下载 | 视频模块必需 |
 | ffmpeg | 5.x/6.x | `-x mp3` 转码、`bv*+ba` 合并 | 视频模块必需 |
@@ -189,16 +190,48 @@ systemctl enable --now redis-server   # CentOS: redis
 
 配置里使用 `db: 4`，Redis 默认 16 个库可直接用（注：根目录 README 写的 `db=1` 已过时，以 `config.yaml` 为准）。
 
-### 3.4 yt-dlp + ffmpeg
+### 3.4 yt-dlp + ffmpeg（视频模块）
+
+`github.com/lrstanley/go-ytdlp` **不是**把 yt-dlp 编进二进制，只是去调系统里的可执行文件。`EnsureBin()` 查找顺序：
+
+1. 环境变量 `FSSADMIN_YTDLP_BIN`（`fssadmin.service` 已设为 `/usr/local/bin/yt-dlp`）
+2. `PATH` 中的 `yt-dlp` / `yt-dlp.exe`
+3. 都没有 → `ytdlp.Install()` 从 GitHub 拉官方二进制（超时 3 分钟）
+
+生产环境**不要走第 3 步**：systemd 的 PATH 很窄，内网也常上不了 GitHub，第一次解析/下载会卡死再失败。请事先装好独立二进制，并让第 1 步命中。
+
+`ffmpeg` 同样要装：默认画质 `bv*+ba/b` 合并、`-x --audio-format mp3` 抽音都依赖它。本仓库的 `EnsureBin()` **不会**调用 `InstallFFmpeg()`。
 
 ```bash
+# Ubuntu / Debian（ffmpeg 走发行版）
+apt update && apt install -y ffmpeg ca-certificates tzdata
+
+# yt-dlp：官方 self-contained 二进制，不要只靠 pip
 curl -fL -o /usr/local/bin/yt-dlp \
   https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux
 chmod +x /usr/local/bin/yt-dlp
-/usr/local/bin/yt-dlp --version && ffmpeg -version | head -1
+
+# 必须用服务账号验证（systemd 用户是 fssadmin，不是 root）
+sudo -u fssadmin /usr/local/bin/yt-dlp --version
+sudo -u fssadmin bash -lc 'command -v ffmpeg && ffmpeg -version | head -1'
 ```
 
-后端的查找顺序是 `FSSADMIN_YTDLP_BIN` → `PATH` 中的 `yt-dlp` → 联网自动下载（3 分钟超时）。生产务必让前两者命中，否则首次调用会在内网卡 3 分钟后失败。
+内网 / 无法访问 GitHub 时，在能上网的机器下载 `yt-dlp_linux`，拷到服务器同一路径：
+
+```bash
+install -m 0755 yt-dlp_linux /usr/local/bin/yt-dlp
+```
+
+`deploy.sh deps` 会尝试完成上述安装；失败时只告警，不会中止整次部署，上线视频功能前务必再确认。
+
+下载产物目录是工作目录下的 `static/videos/`，属主必须是 `fssadmin`：
+
+```bash
+mkdir -p /opt/fssadmin/static/videos
+chown -R fssadmin:fssadmin /opt/fssadmin/static/videos
+```
+
+页面进度**不是 WebSocket**：`parseProgress` 把百分比写入任务表，前端每 2 秒请求 `GET /api/platform/video/progress?ids=...`。反代按普通 HTTP 即可，见 [3.8 Nginx](#38-nginx) / [3.9 Apache](#39-apachehttp-轮询)。控制台进度在 journal：`journalctl -u fssadmin -f`。
 
 ### 3.5 配置文件
 
@@ -258,9 +291,52 @@ sed -e 's#__DOMAIN__#admin.example.com#g' \
 nginx -t && systemctl reload nginx
 ```
 
-`/api` 前缀由后端中间件 `RewriteAPIPrefix` 剥离，无需 rewrite 规则。`/ws/` 保留了 WebSocket 升级头，供 `useAiChatWs` 使用。
+`/api` 前缀由后端中间件 `RewriteAPIPrefix` 剥离，无需 rewrite 规则。模板里 `proxy_read_timeout 300s`、`proxy_buffering off` 是为视频解析和进度轮询准备的。`/ws/` 才保留 WebSocket 升级头，供 AI 聊天 `useAiChatWs` 使用，**与下载进度无关**。
 
-### 3.9 前端
+### 3.9 Apache（HTTP 轮询）
+
+`deploy.sh` 只渲染 Nginx。若站点走 Apache，用 `deploy/apache-fssadmin.conf`（占位符与 Nginx 模板相同）。
+
+视频页进度链路：
+
+1. `yt-dlp` 输出 `[download] 45.3% ...`
+2. 后端写入任务表 `progress` / `speed`
+3. 页面每 2 秒 `GET /api/platform/video/progress?ids=...`（普通 HTTP JSON）
+4. 用返回的 `job_progress` 画进度条
+
+因此 Apache **不必**为视频进度开 WebSocket；只要 `/api` 反代通、超时够、不要把短轮询缓冲住即可。仓库里真正的 WS 只有 `/ws/ai`。
+
+启用模块：
+
+```bash
+# Debian / Ubuntu
+a2enmod proxy proxy_http proxy_wstunnel headers rewrite
+# proxy_wstunnel / rewrite 仅 AI 聊天需要；视频进度只用 proxy + proxy_http
+
+sed -e 's#__DOMAIN__#admin.example.com#g' \
+    -e 's#__WEB_ROOT__#/var/www/fssadmin#g' \
+    -e 's#__APP_PORT__#8181#g' \
+    deploy/apache-fssadmin.conf > /etc/apache2/sites-available/fssadmin.conf
+a2ensite fssadmin
+apache2ctl configtest && systemctl reload apache2
+```
+
+RHEL / Rocky 把文件放到 `/etc/httpd/conf.d/fssadmin.conf`，模块名为 `mod_proxy` / `mod_proxy_http` / `mod_proxy_wstunnel`。
+
+要点：
+
+| 项 | 说明 |
+| --- | --- |
+| `ProxyPass /api/` | 进度轮询走这里，**不要**配 `Upgrade` |
+| `ProxyTimeout 300` | 视频解析、入队下载可能较慢 |
+| `flushpackets=on` | 避免进度 JSON 被反向代理攒着 |
+| `LimitRequestBody 67108864` | 与后端 `clientMaxBodySize: 64MB` 对齐 |
+| `ProxyPass /ws/` + `upgrade=websocket` | **仅** AI 聊天；配错不影响下载进度 |
+| Apache &lt; 2.4.47 | 没有 `upgrade=websocket`，用文档模板里的 `RewriteRule ... [P]` 那段 |
+
+本地开发后端是 `:8787`，`deploy.sh` 生产默认 `:8181`，Apache 里改成实际 `APP_PORT`。
+
+### 3.10 前端
 
 ```bash
 cd web
@@ -269,7 +345,7 @@ rsync -a --delete web/dist/ /var/www/fssadmin/
 chown -R www-data:www-data /var/www/fssadmin       # CentOS: nginx:nginx
 ```
 
-`web/.env.production` 中 `VITE_API_URL=/api`，与 Nginx 反代路径一致，无需改动。
+`web/.env.production` 中 `VITE_API_URL=/api`，与 Nginx / Apache 反代路径一致，无需改动。
 
 ---
 
@@ -286,6 +362,13 @@ curl -s -X POST http://127.0.0.1:8181/core/login \
   -d '{"username":"admin","password":"admin123"}'
 
 curl -sI -H 'Host: admin.example.com' http://127.0.0.1/
+
+# 视频模块：二进制必须对 fssadmin 用户可见
+sudo -u fssadmin /usr/local/bin/yt-dlp --version
+command -v ffmpeg
+# 进度接口（未登录会 401，能通即可；登录后 ids= 为视频主键）
+curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:8181/api/platform/video/progress?ids=1'
+
 journalctl -u fssadmin -n 50 --no-pager     # 必须看到 mysql ready / redis ready
 ```
 
@@ -335,7 +418,9 @@ mysql -ufssadmin -p \`fssoa-net\` < database/fssoa.sql
 | 启动日志出现 `(degraded)` | 数据库或 Redis 连接串/密码错误，进程不退出，需修正后重启 |
 | 页面 404 / 白屏 | 前端 dist 未部署到 `WEB_ROOT`，或 Nginx `root` 未改 |
 | `/api` 502 | 后端未启动；`systemctl status fssadmin` 查看 |
-| 视频下载/解析失败 | `ffmpeg` 缺失或 `yt-dlp` 不在 `PATH`；手动执行 `yt-dlp -J <url>` 复现 |
+| 视频下载/解析失败 | `ffmpeg` 缺失，或 `yt-dlp` 未命中 `FSSADMIN_YTDLP_BIN`；`sudo -u fssadmin yt-dlp -J <url>` 复现。不要指望 `go-ytdlp` 在生产自动下载 |
+| 页面进度条不动 | 前端轮询 `/api/platform/video/progress`（每 2 秒），不是 `/ws`。检查 Apache/Nginx 的 `/api` 反代、超时与缓冲；`/ws` 配错只影响 AI 聊天 |
+| 首次下载卡住约 3 分钟后失败 | 未预装 yt-dlp，进程在走 `ytdlp.Install()`；按 [3.4](#34-yt-dlp--ffmpeg视频模块) 装到 `/usr/local/bin/yt-dlp` 并重启 `fssadmin` |
 | 备份任务失败或很慢 | `mysqldump` 不在 systemd `PATH`；确认单元内 `Environment=PATH=` |
 | Nginx 80 端口被占用 | `DOMAIN` 未设置时脚本已配 `default_server` 并移除发行版默认站点；如有其它站点需手工调整 |
 | 上传大文件 413 | `client_max_body_size` 与 `server.clientMaxBodySize` 需同时调大 |
@@ -452,6 +537,7 @@ app:
     └── server/access|error.*.log # WebServer 日志
 
 /etc/systemd/system/fssadmin.service
-/etc/nginx/conf.d/fssadmin.conf
-/var/www/fssadmin/                 # 前端 dist
+/etc/nginx/conf.d/fssadmin.conf            # 或 Apache: /etc/apache2/sites-available/fssadmin.conf
+/usr/local/bin/yt-dlp                      # FSSADMIN_YTDLP_BIN
+/var/www/fssadmin/                         # 前端 dist
 ```

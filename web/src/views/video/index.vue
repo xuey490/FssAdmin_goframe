@@ -52,7 +52,7 @@
           </template>
           <template #job="{ row }">
             <div
-              v-if="row.job_mode === 'best' && row.job_progress !== null && row.job_progress !== undefined"
+              v-if="Number(row.active_job_id) > 0"
               class="job-cell"
             >
               <ElProgress
@@ -196,9 +196,9 @@
     return undefined
   }
 
-  /** 有进行中的 best 任务时轮询 */
-  const isBestDownloading = (row: any) =>
-    row.job_mode === 'best' && [0, 1, 2].includes(Number(row.job_status))
+  /** 排队 / 下载中 / 暂停 都轮询，不限 mode（best/audio/subs/custom） */
+  const isJobActive = (row: any) =>
+    Number(row.active_job_id) > 0 && [0, 1, 2].includes(Number(row.job_status ?? row.active_job_status))
 
   const {
     columns,
@@ -249,14 +249,14 @@
   })
 
   const needPoll = () =>
-    (data.value || []).some((r: any) => Number(r.status) === 0 || isBestDownloading(r))
+    (data.value || []).some((r: any) => Number(r.status) === 0 || isJobActive(r))
 
   let polling = false
   const pollProgressOnly = async () => {
     if (polling) return
     const rows = (data.value || []) as any[]
     const watchIds = rows
-      .filter((r) => Number(r.status) === 0 || isBestDownloading(r))
+      .filter((r) => Number(r.status) === 0 || isJobActive(r))
       .map((r) => r.id)
     if (!watchIds.length) {
       if (pollTimer) {
@@ -311,6 +311,7 @@
       pollTimer = null
     }
     if (needPoll()) {
+      pollProgressOnly()
       pollTimer = setInterval(pollProgressOnly, 2000)
     }
   }
