@@ -6,11 +6,7 @@
       <h1 class="title">{{ systemName }}</h1>
     </div>
 
-    <AuthTopBar
-      fixed-to-viewport
-      show-login-layout
-      v-model:login-layout="loginLayout"
-    />
+    <AuthTopBar fixed-to-viewport show-login-layout v-model:login-layout="loginLayout" />
 
     <LoginLeftView class="login-bg" hide-logo :center-mode="loginLayout === 'center'" />
 
@@ -49,7 +45,11 @@
                   :value="tenant.id"
                 >
                   <span>{{ tenant.name }}</span>
-                  <span v-if="tenant.is_default" style="color: var(--el-color-primary); margin-left: 8px;">(默认)</span>
+                  <span
+                    v-if="tenant.is_default"
+                    style="margin-left: 8px; color: var(--el-color-primary)"
+                    >(默认)</span
+                  >
                 </ElOption>
               </ElSelect>
             </ElFormItem>
@@ -79,7 +79,6 @@
                   />
                 </template>
               </ElInput>
-             
             </ElFormItem>
 
             <div class="flex-cb mt-2 text-sm">
@@ -127,28 +126,42 @@
         <ElTabPane label="PHP版本" name="php">
           <div class="welcome-dialog">
             <p class="welcome-dialog__intro">
-              FssAdmin PHP 版本，基于自研 Fssphp 框架，可以基于swoole、workerman、传统fpm等多个模式启动，一个后台适配多个前端系统。
+              FssAdmin PHP 版本，基于自研 Fssphp
+              框架，可以基于swoole、workerman、传统fpm等多个模式启动，一个后台适配多个前端系统。
             </p>
             <ul class="welcome-dialog__list">
               <li>
                 适配 Art Design Pro：
-                <a href="https://v3.phpframe.org" target="_blank" rel="noopener noreferrer">https://v3.phpframe.org</a>
+                <a href="https://v3.phpframe.org" target="_blank" rel="noopener noreferrer"
+                  >https://v3.phpframe.org</a
+                >
                 <span class="welcome-dialog__tag">（本演示，已开源）</span>
               </li>
               <li>
                 适配 SoyBeanAdmin：
-                <a href="https://v4.phpframe.org" target="_blank" rel="noopener noreferrer">https://v4.phpframe.org</a>
+                <a href="https://v4.phpframe.org" target="_blank" rel="noopener noreferrer"
+                  >https://v4.phpframe.org</a
+                >
                 <span class="welcome-dialog__tag">（已开源）</span>
               </li>
               <li>
                 适配 Vben5-Ele：
-                <a href="https://v5.phpframe.org" target="_blank" rel="noopener noreferrer">https://v5.phpframe.org</a>
+                <a href="https://v5.phpframe.org" target="_blank" rel="noopener noreferrer"
+                  >https://v5.phpframe.org</a
+                >
               </li>
             </ul>
             <p class="welcome-dialog__footer">php版本 已开源，欢迎关注 & Star：</p>
             <div class="welcome-dialog__links">
-              <a href="https://gitee.com/fsscms/FssAdmin" target="_blank" rel="noopener noreferrer">Gitee</a>
-              <a href="https://github.com/xuey490/FssAdmin" target="_blank" rel="noopener noreferrer">GitHub</a>
+              <a href="https://gitee.com/fsscms/FssAdmin" target="_blank" rel="noopener noreferrer"
+                >Gitee</a
+              >
+              <a
+                href="https://github.com/xuey490/FssAdmin"
+                target="_blank"
+                rel="noopener noreferrer"
+                >GitHub</a
+              >
             </div>
           </div>
         </ElTabPane>
@@ -161,7 +174,9 @@
             <ul class="welcome-dialog__list">
               <li>
                 适配 Art Design Pro：
-                <a href="https://nest.phpframe.org" target="_blank" rel="noopener noreferrer">https://nest.phpframe.org</a>
+                <a href="https://nest.phpframe.org" target="_blank" rel="noopener noreferrer"
+                  >https://nest.phpframe.org</a
+                >
               </li>
             </ul>
             <p class="welcome-dialog__note">
@@ -169,48 +184,87 @@
             </p>
             <p class="welcome-dialog__footer">NestJs 版本已开源，欢迎关注 & Star：</p>
             <div class="welcome-dialog__links">
-              <a href="https://gitee.com/fsscms/fssadmin-nest" target="_blank" rel="noopener noreferrer">Gitee</a>
-              <a href="https://github.com/xuey490/FssAdmin_NestJs" target="_blank" rel="noopener noreferrer">GitHub</a>
+              <a
+                href="https://gitee.com/fsscms/fssadmin-nest"
+                target="_blank"
+                rel="noopener noreferrer"
+                >Gitee</a
+              >
+              <a
+                href="https://github.com/xuey490/FssAdmin_NestJs"
+                target="_blank"
+                rel="noopener noreferrer"
+                >GitHub</a
+              >
             </div>
           </div>
         </ElTabPane>
         <ElTabPane label="Python版本" name="python">
           <div class="welcome-dialog">
             <p class="welcome-dialog__intro">
-              FssAdmin Python 版本，基于 FastAPI + SQLAlchemy 异步架构，高性能 Python 全栈后台解决方案。
+              FssAdmin Python 版本，基于 FastAPI + SQLAlchemy 异步架构，高性能 Python
+              全栈后台解决方案。
             </p>
             <ul class="welcome-dialog__list">
               <li>
                 适配 Art Design Pro：
-                <a href="https://fast.phpframe.org" target="_blank" rel="noopener noreferrer">https://fast.phpframe.org</a>
+                <a href="https://fast.phpframe.org" target="_blank" rel="noopener noreferrer"
+                  >https://fast.phpframe.org</a
+                >
               </li>
             </ul>
             <p class="welcome-dialog__footer">Python 版本开源中，欢迎关注 & Star：</p>
             <div class="welcome-dialog__links">
-              <a href="https://gitee.com/fsscms/FssAdmin_Python" target="_blank" rel="noopener noreferrer">Gitee</a>
-              <a href="https://github.com/xuey490/FssAdmin_Python" target="_blank" rel="noopener noreferrer">GitHub</a>
+              <a
+                href="https://gitee.com/fsscms/FssAdmin_Python"
+                target="_blank"
+                rel="noopener noreferrer"
+                >Gitee</a
+              >
+              <a
+                href="https://github.com/xuey490/FssAdmin_Python"
+                target="_blank"
+                rel="noopener noreferrer"
+                >GitHub</a
+              >
             </div>
           </div>
         </ElTabPane>
         <ElTabPane label="Golang版本" name="golang">
           <div class="welcome-dialog">
             <p class="welcome-dialog__intro">
-              基于 GoFrame 的企业级管理后台 REST API 服务：JWT 鉴权、多租户、Redis缓存、RBAC、定时任务、监控与运维能力等，提供 OpenAPI（/api.json）与 Swagger（/docs）
+              基于 GoFrame 的企业级管理后台 REST API 服务：JWT
+              鉴权、多租户、Redis缓存、RBAC、定时任务、监控与运维能力等，提供 OpenAPI（/api.json）与
+              Swagger（/docs）
             </p>
             <ul class="welcome-dialog__list">
               <li>
                 适配 SoyAdmin：
-                <a href="https://gf.phpframe.org" target="_blank" rel="noopener noreferrer">https://gf.phpframe.org</a>
+                <a href="https://gf.phpframe.org" target="_blank" rel="noopener noreferrer"
+                  >https://gf.phpframe.org</a
+                >
               </li>
               <li>
                 适配 Art Design Pro：
-                <a href="https://goframe.phpframe.org" target="_blank" rel="noopener noreferrer">https://goframe.phpframe.org</a>
+                <a href="https://goframe.phpframe.org" target="_blank" rel="noopener noreferrer"
+                  >https://goframe.phpframe.org</a
+                >
               </li>
             </ul>
             <p class="welcome-dialog__footer">Goframe版本开源中，欢迎关注 & Star：</p>
             <div class="welcome-dialog__links">
-              <a href="https://gitee.com/fsscms/FssAdmin_goframe" target="_blank" rel="noopener noreferrer">Gitee</a>
-              <a href="https://github.com/xuey490/FssAdmin_goframe" target="_blank" rel="noopener noreferrer">GitHub</a>
+              <a
+                href="https://gitee.com/fsscms/FssAdmin_goframe"
+                target="_blank"
+                rel="noopener noreferrer"
+                >Gitee</a
+              >
+              <a
+                href="https://github.com/xuey490/FssAdmin_goframe"
+                target="_blank"
+                rel="noopener noreferrer"
+                >GitHub</a
+              >
             </div>
           </div>
         </ElTabPane>
@@ -317,14 +371,17 @@
   })
 
   // 监听用户名变化，加载租户列表
-  watch(() => formData.username, (newUsername) => {
-    if (newUsername && newUsername.trim()) {
-      loadTenantList()
-    } else {
-      tenantList.value = []
-      formData.tenant_id = undefined
+  watch(
+    () => formData.username,
+    (newUsername) => {
+      if (newUsername && newUsername.trim()) {
+        loadTenantList()
+      } else {
+        tenantList.value = []
+        formData.tenant_id = undefined
+      }
     }
-  })
+  )
 
   // 加载租户列表
   const loadTenantList = async () => {
@@ -336,13 +393,13 @@
       loadingTenants.value = true
       const list = await fetchTenantsByUsername(formData.username.trim())
       tenantList.value = list || []
-      
+
       // 如果只有一个租户，自动选中
       if (tenantList.value.length === 1) {
         formData.tenant_id = tenantList.value[0].id
       } else if (tenantList.value.length > 0) {
         // 如果有默认租户，自动选中
-        const defaultTenant = tenantList.value.find(t => t.is_default)
+        const defaultTenant = tenantList.value.find((t) => t.is_default)
         if (defaultTenant) {
           formData.tenant_id = defaultTenant.id
         }
@@ -359,13 +416,16 @@
   const handleSubmit = async () => {
     if (!formRef.value) return
 
+    // 前端校验失败时保留已输入内容和当前验证码
     try {
-      // 表单验证
-      const valid = await formRef.value.validate()
-      if (!valid) return
+      await formRef.value.validate()
+    } catch {
+      return
+    }
 
-      loading.value = true
+    loading.value = true
 
+    try {
       // 登录请求
       const { access_token, refresh_token } = await fetchLogin({
         username: formData.username,
@@ -397,18 +457,20 @@
             ? error.message
             : '登录失败，请稍后重试'
       ElMessage.error(msg || '登录失败，请稍后重试')
+      // 验证码一次性有效，失败后旧码不能再用
+      await refreshCaptcha()
     } finally {
-      refreshCaptcha()
       loading.value = false
     }
   }
 
-  // 获取验证码
+  // 获取验证码，并清空已输入的验证码
   const refreshCaptcha = async () => {
-    fetchCaptcha().then((res) => {
-      formData.uuid = res.uuid
-      captcha.value = res.image
-    })
+    formData.code = ''
+    const res = await fetchCaptcha()
+    formData.uuid = res.uuid
+    captcha.value = res.image
+    formRef.value?.clearValidate('code')
   }
 
   // 登录成功提示
@@ -458,8 +520,8 @@
     }
 
     :deep(.el-tabs__item) {
-      padding: 0 20px;
       height: 40px;
+      padding: 0 20px;
       font-size: 14px;
     }
 
@@ -469,10 +531,10 @@
   }
 
   .welcome-dialog {
-    line-height: 1.7;
-    font-size: 14px;
-    color: var(--el-text-color-regular);
     min-height: 200px;
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--el-text-color-regular);
 
     &__intro {
       margin: 0 0 16px;
@@ -481,8 +543,8 @@
     }
 
     &__list {
-      margin: 0 0 16px;
       padding-left: 20px;
+      margin: 0 0 16px;
 
       li + li {
         margin-top: 10px;
@@ -499,8 +561,8 @@
     }
 
     &__tag {
-      color: var(--el-text-color-secondary);
       font-size: 13px;
+      color: var(--el-text-color-secondary);
     }
 
     &__footer {
@@ -518,8 +580,8 @@
       gap: 16px;
 
       a {
-        color: var(--el-color-primary);
         font-weight: 500;
+        color: var(--el-color-primary);
         text-decoration: none;
 
         &:hover {

@@ -50,11 +50,13 @@ const tenantOptions = ref<Api.Auth.TenantItem[]>([]);
 const loadingTenants = ref(false);
 
 async function loadCaptcha() {
+  model.value.code = '';
   const { data, error } = await fetchGetCaptcha();
   if (!error) {
     model.value.uuid = data.uuid;
     captchaImg.value = data.image;
   }
+  formRef.value?.clearValidate('code');
 }
 
 async function loadTenants() {
@@ -79,7 +81,7 @@ async function loadTenants() {
 
 async function handleSubmit() {
   await validate();
-  await authStore.login({
+  const ok = await authStore.login({
     username: model.value.username,
     password: model.value.password,
     tenant_id: Number(model.value.tenant_id),
@@ -87,6 +89,10 @@ async function handleSubmit() {
     uuid: model.value.uuid,
     rememberPassword: model.value.rememberPassword
   });
+  // 验证码一次性有效，输错或登录失败后清空并换一张
+  if (!ok) {
+    await loadCaptcha();
+  }
 }
 
 type AccountKey = 'super' | 'admin' | 'user';
@@ -139,7 +145,11 @@ loadCaptcha();
 <template>
   <ElForm ref="formRef" :model="model" :rules="rules" size="large" :show-label="false" @keyup.enter="handleSubmit">
     <ElFormItem prop="username">
-      <ElInput v-model="model.username" :placeholder="$t('page.login.common.userNamePlaceholder')" @blur="loadTenants" />
+      <ElInput
+        v-model="model.username"
+        :placeholder="$t('page.login.common.userNamePlaceholder')"
+        @blur="loadTenants"
+      />
     </ElFormItem>
     <ElFormItem prop="password">
       <ElInput
@@ -155,7 +165,7 @@ loadCaptcha();
         clearable
         filterable
         :loading="loadingTenants"
-        :placeholder="'请选择租户'"
+        placeholder="请选择租户"
         @visible-change="val => val && loadTenants()"
       >
         <ElOption v-for="tenant in tenantOptions" :key="tenant.id" :label="tenant.name" :value="tenant.id" />
@@ -163,12 +173,12 @@ loadCaptcha();
     </ElFormItem>
     <ElFormItem prop="code">
       <div class="w-full flex items-center gap-8px">
-        <ElInput v-model="model.code" :placeholder="'请输入验证码'" />
+        <ElInput v-model="model.code" placeholder="请输入验证码" />
         <img
           v-if="captchaImg"
           :src="captchaImg"
           alt="captcha"
-          class="h-40px w-120px cursor-pointer rounded border border-solid border-#ddd"
+          class="h-40px w-120px cursor-pointer border border-#ddd rounded border-solid"
           @click="loadCaptcha"
         />
       </div>
@@ -176,7 +186,8 @@ loadCaptcha();
     <ElSpace direction="vertical" :size="24" class="w-full" fill>
       <div class="flex-y-center justify-between">
         <ElCheckbox v-model="model.rememberPassword">{{ $t('page.login.pwdLogin.rememberMe') }}</ElCheckbox>
-        <!--<ElButton text @click="toggleLoginModule('reset-pwd')">
+        <!--
+<ElButton text @click="toggleLoginModule('reset-pwd')">
           {{ $t('page.login.pwdLogin.forgetPassword') }}
         </ElButton>
         -->
@@ -184,18 +195,20 @@ loadCaptcha();
       <ElButton type="primary" size="large" round block :loading="authStore.loginLoading" @click="handleSubmit">
         {{ $t('common.confirm') }}
       </ElButton>
-      
+
       <div class="flex-y-center justify-between gap-12px">
-        <!--<ElButton class="flex-1" size="default" @click="toggleLoginModule('code-login')">
+        <!--
+<ElButton class="flex-1" size="default" @click="toggleLoginModule('code-login')">
           {{ $t(loginModuleRecord['code-login']) }}
         </ElButton>
         <ElButton class="flex-1" size="default" @click="toggleLoginModule('register')">
           {{ $t(loginModuleRecord.register) }}
-        </ElButton>-->
-       
+        </ElButton>
+-->
       </div>
-      
-      <!--<ElDivider class="text-14px text-#666 !m-0">{{ $t('page.login.pwdLogin.otherAccountLogin') }}</ElDivider>
+
+      <!--
+<ElDivider class="text-14px text-#666 !m-0">{{ $t('page.login.pwdLogin.otherAccountLogin') }}</ElDivider>
       <div class="flex-center gap-12px">
          <ElButton
           v-for="item in accounts"
@@ -207,7 +220,8 @@ loadCaptcha();
         >
           {{ item.label }}
         </ElButton>
-      </div>-->
+      </div>
+-->
     </ElSpace>
   </ElForm>
 </template>

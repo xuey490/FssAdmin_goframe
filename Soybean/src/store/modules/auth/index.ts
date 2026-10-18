@@ -135,34 +135,40 @@ export const useAuthStore = defineStore(SetupStoreId.Auth, () => {
    */
   async function login(payload: Api.Auth.LoginParams, redirect = true) {
     startLoading();
+    let ok = false;
 
-    const { data: loginToken, error } = await fetchLogin(payload);
+    try {
+      const { data: loginToken, error } = await fetchLogin(payload);
 
-    if (!error) {
-      const pass = await loginByToken(loginToken);
+      if (!error) {
+        const pass = await loginByToken(loginToken);
 
-      if (pass) {
-        // Check if the tab needs to be cleared
-        const isClear = checkTabClear();
-        let needRedirect = redirect;
+        if (pass) {
+          // Check if the tab needs to be cleared
+          const isClear = checkTabClear();
+          let needRedirect = redirect;
 
-        if (isClear) {
-          // If the tab needs to be cleared,it means we don't need to redirect.
-          needRedirect = false;
+          if (isClear) {
+            // If the tab needs to be cleared,it means we don't need to redirect.
+            needRedirect = false;
+          }
+          await redirectFromLogin(needRedirect);
+
+          window.$notification?.success({
+            title: $t('page.login.common.loginSuccess'),
+            message: $t('page.login.common.welcomeBack', { userName: userInfo.userName }),
+            duration: 4500
+          });
+          ok = true;
         }
-        await redirectFromLogin(needRedirect);
-
-        window.$notification?.success({
-          title: $t('page.login.common.loginSuccess'),
-          message: $t('page.login.common.welcomeBack', { userName: userInfo.userName }),
-          duration: 4500
-        });
+      } else {
+        resetStore();
       }
-    } else {
-      resetStore();
+    } finally {
+      endLoading();
     }
 
-    endLoading();
+    return ok;
   }
 
   async function loginByToken(loginToken: Api.Auth.LoginToken) {
