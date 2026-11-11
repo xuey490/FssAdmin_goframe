@@ -15,6 +15,12 @@ JWT 鉴权、多租户、RBAC、定时任务、监控运维、附件与视频队
 
 </div>
 
+欢迎加入 QQ 交流群：
+
+![QQ 交流群](https://v3.phpframe.org/assets/qqgroup-C2pjhKmS.png)
+
+
+
 ## 在线演示
 
 | 前台 | 地址 | 说明 |
