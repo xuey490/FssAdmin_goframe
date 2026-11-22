@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"time"
 
 	"fssadmin/go-project/internal/shared/conf"
@@ -46,9 +47,23 @@ type IssueCtx struct {
 	LoginLocation string
 }
 
+// redisOKCached 缓存 5 秒的 Redis 健康态，避免每个请求都先 PING 一次。
+var (
+	redisOKMu     sync.Mutex
+	redisOKAt     time.Time
+	redisOKResult bool
+)
+
 func redisOK() bool {
+	redisOKMu.Lock()
+	defer redisOKMu.Unlock()
+	if time.Since(redisOKAt) < 5*time.Second {
+		return redisOKResult
+	}
 	_, err := g.Redis().Do(context.Background(), "PING")
-	return err == nil
+	redisOKAt = time.Now()
+	redisOKResult = err == nil
+	return redisOKResult
 }
 
 func Issue(ctx IssueCtx) (TokenPair, error) {
@@ -89,21 +104,28 @@ func Issue(ctx IssueCtx) (TokenPair, error) {
 			"ipaddr": ctx.IP, "loginLocation": ctx.LoginLocation, "login_location": ctx.LoginLocation,
 			"os": ctx.OS, "browser": ctx.Browser,
 			"loginTime": now.Format("2006-01-02 15:04:05"), "login_time": now.Format("2006-01-02 15:04:05"),
-			"login_type": "PC端", "token": at,
+			"login_type": "PC端",
 		}
+		// 安全：会话中不存原始 token（Redis 浏览器/运维接口可能读取任意 key 的值）。
 		raw, _ := json.Marshal(sess)
 		_, _ = g.Redis().Do(context.Background(), "SETEX", "token:session:"+sid, ttl, string(raw))
 		_, _ = g.Redis().Do(context.Background(), "SADD", "token:user_sessions:"+itoa(ctx.UID), sid)
+		// 会话集合跟随 access TTL 过期，防止登出未 SREM 导致集合无限增长。
+		_, _ = g.Redis().Do(context.Background(), "EXPIRE", "token:user_sessions:"+itoa(ctx.UID), ttl)
 		_, _ = g.Redis().Do(context.Background(), "SETEX", "token:refresh:"+hashTok(rt), conf.RefreshTTL(), itoa(ctx.UID))
+		// 记录该用户名下的 refresh 键，供禁用/踢人时统一吊销。
+		_, _ = g.Redis().Do(context.Background(), "SADD", "token:user_refreshes:"+itoa(ctx.UID), hashTok(rt))
+		_, _ = g.Redis().Do(context.Background(), "EXPIRE", "token:user_refreshes:"+itoa(ctx.UID), conf.RefreshTTL())
 		_, _ = g.Redis().Do(context.Background(), "SETEX", "token:access:"+hashTok(at), ttl, sid)
 	}
 	return TokenPair{AccessToken: at, RefreshToken: rt, TokenType: "Bearer", ExpiresIn: ttl, TenantID: ctx.TenantID}, nil
 }
 
 func ParseAccess(token string) (*Claims, error) {
+	// 显式固定签名算法，防算法混淆（none/RS256 等）。
 	tok, err := jwt.ParseWithClaims(token, &Claims{}, func(t *jwt.Token) (interface{}, error) {
 		return []byte(conf.Secret()), nil
-	})
+	}, jwt.WithValidMethods([]string{"HS256"}))
 	if err != nil {
 		return nil, err
 	}
@@ -124,10 +146,24 @@ func ParseAccess(token string) (*Claims, error) {
 	return c, nil
 }
 
+// getDelScript 原子 GET+DEL：refresh token 与验证码的一次性消费。
+// Redis >= 2.6 支持 EVAL，兼容旧版本无需 GETDEL 命令。
+var getDelScript = `local v = redis.call('GET', KEYS[1])
+if v then redis.call('DEL', KEYS[1]) end
+return v`
+
+func getDelKey(key string) (string, bool) {
+	v, err := g.Redis().Do(context.Background(), "EVAL", getDelScript, "1", key)
+	if err != nil || v == nil || v.IsEmpty() {
+		return "", false
+	}
+	return v.String(), true
+}
+
 func ResolveRefresh(refresh string) (int, string, error) {
 	tok, err := jwt.Parse(refresh, func(t *jwt.Token) (interface{}, error) {
 		return []byte(conf.Secret()), nil
-	})
+	}, jwt.WithValidMethods([]string{"HS256"}))
 	if err != nil || !tok.Valid {
 		return 0, "", err
 	}
@@ -144,7 +180,17 @@ func ResolveRefresh(refresh string) (int, string, error) {
 		sid = v
 	}
 	if redisOK() {
-		_, _ = g.Redis().Do(context.Background(), "DEL", "token:refresh:"+hashTok(refresh))
+		// 一次性消费：原子 GETDEL。键不存在说明已被使用/吊销 → 拒绝重放。
+		if _, ok := getDelKey("token:refresh:" + hashTok(refresh)); !ok {
+			return 0, "", jwt.ErrTokenExpired
+		}
+		// 会话已被强制下线时 refresh 一并失效。
+		if sid != "" {
+			kicked, _ := g.Redis().Do(context.Background(), "GET", "token:kick:"+sid)
+			if kicked != nil && !kicked.IsEmpty() {
+				return 0, "", jwt.ErrTokenNotValidYet
+			}
+		}
 	}
 	return uid, sid, nil
 }
@@ -173,18 +219,47 @@ func InvalidateUser(uid int) {
 		_, _ = g.Redis().Do(context.Background(), "SETEX", "token:kick:"+sid, conf.AccessTTL(), "1")
 	}
 	_, _ = g.Redis().Do(context.Background(), "DEL", "token:user_sessions:"+itoa(uid))
+	// 同时吊销该用户全部 refresh token，防止被踢用户用旧 refresh 重新换取会话。
+	rv, err := g.Redis().Do(context.Background(), "SMEMBERS", "token:user_refreshes:"+itoa(uid))
+	if err == nil {
+		for _, h := range rv.Strings() {
+			_, _ = g.Redis().Do(context.Background(), "DEL", "token:refresh:"+h)
+		}
+	}
+	_, _ = g.Redis().Do(context.Background(), "DEL", "token:user_refreshes:"+itoa(uid))
+}
+
+// scanKeys 用 SCAN 渐进式遍历代替 KEYS，避免在键空间大时阻塞整个 Redis。
+func scanKeys(pattern string) []string {
+	var out []string
+	cursor := "0"
+	for {
+		v, err := g.Redis().Do(context.Background(), "SCAN", cursor, "MATCH", pattern, "COUNT", "200")
+		if err != nil {
+			return out
+		}
+		// SCAN 回复为 [cursor, [key...]] 的嵌套数组。
+		vars := v.Vars()
+		if len(vars) < 2 {
+			return out
+		}
+		cursor = vars[0].String()
+		for _, k := range vars[1].Vars() {
+			out = append(out, k.String())
+		}
+		if cursor == "0" || cursor == "" {
+			return out
+		}
+	}
 }
 
 func ListSessions() []map[string]interface{} {
 	if !redisOK() {
 		return []map[string]interface{}{}
 	}
-	keys, err := g.Redis().Do(context.Background(), "KEYS", "token:session:*")
-	if err != nil {
-		return []map[string]interface{}{}
-	}
+	keys := scanKeys("token:session:*")
 	out := []map[string]interface{}{}
-	for _, k := range keys.Strings() {
+	for _, k := range keys {
 		raw, err := g.Redis().Do(context.Background(), "GET", k)
 		if err != nil || raw.IsEmpty() {
 			continue
@@ -247,12 +322,12 @@ func VerifyCaptcha(uuid, code string) bool {
 		return false
 	}
 	if redisOK() {
-		v, err := g.Redis().Do(context.Background(), "GET", "captcha:codes:"+uuid)
-		_, _ = g.Redis().Do(context.Background(), "DEL", "captcha:codes:"+uuid)
-		if err != nil || v.IsEmpty() {
+		// 原子 GET+DEL：防止并发请求在 DEL 生效前重复读取同一验证码爆破密码。
+		v, ok := getDelKey("captcha:codes:" + uuid)
+		if !ok {
 			return false
 		}
-		return strings.EqualFold(v.String(), code)
+		return strings.EqualFold(v, code)
 	}
 	got, ok := captchaMem.LoadAndDelete(uuid)
 	if !ok {

@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -162,7 +164,14 @@ func Auth(r *ghttp.Request) {
 		return
 	}
 	u := authkit.FromClaims(c, token)
-	rec, _ := dbx.Alive(dbx.Model("sa_system_user")).Where("id", c.UID).One()
+	rec, err := dbx.Alive(dbx.Model("sa_system_user")).Ctx(r.Context()).Where("id", c.UID).One()
+	if err != nil {
+		// DB 抖动不能等同于「用户不存在」：报 503 并记录日志，前端可重试而不是被登出。
+		g.Log().Warningf(r.Context(), "auth: 查询用户失败 uid=%d: %v", c.UID, err)
+		response.FailHTTP(r, 503, 503, "系统繁忙，请稍后重试")
+		r.ExitAll()
+		return
+	}
 	if rec.IsEmpty() {
 		response.FailHTTP(r, 401, 401, "用户不存在")
 		r.ExitAll()
@@ -218,17 +227,13 @@ func OperLog(r *ghttp.Request) {
 	}
 	u := ctxuser.Get(r)
 	username := ""
-	uid := 0
-	tid := 0
 	if u != nil {
-		username, uid, tid = u.Username, u.ID, u.TenantID
+		username = u.Username
 	}
-	body := r.GetBodyString()
+	body := maskSensitiveBody(r.GetBodyString())
 	if len(body) > 2000 {
 		body = body[:2000]
 	}
-	_ = uid
-	_ = tid
 	_, _ = dbx.Model("sa_system_oper_log").Data(g.Map{
 		"username": username, "app": "system", "method": r.Method,
 		"router": r.URL.Path, "service_name": r.Router.Uri,
@@ -236,6 +241,48 @@ func OperLog(r *ghttp.Request) {
 		"duration":    g.NewVar(time.Since(start).Milliseconds()).String(),
 		"create_time": dbx.Now(),
 	}).Insert()
+}
+
+// sensitiveLogKeys 操作日志中必须脱敏的字段（密码/令牌/验证码），防止明文入库。
+var sensitiveLogKeys = map[string]struct{}{
+	"password": {}, "oldpassword": {}, "old_password": {}, "newpassword": {}, "new_password": {},
+	"confirmpassword": {}, "confirm_password": {}, "pwd": {}, "passwd": {},
+	"refresh_token": {}, "refreshtoken": {}, "access_token": {}, "accesstoken": {},
+	"token": {}, "captcha": {}, "code": {},
+}
+
+func maskSensitiveBody(body string) string {
+	if body == "" || (!strings.Contains(body, "{") && !strings.Contains(body, "[")) {
+		return body
+	}
+	var v interface{}
+	if json.Unmarshal([]byte(body), &v) != nil {
+		return body
+	}
+	maskWalk(v)
+	if out, err := json.Marshal(v); err == nil {
+		return string(out)
+	}
+	return body
+}
+
+func maskWalk(v interface{}) {
+	switch t := v.(type) {
+	case map[string]interface{}:
+		for k, x := range t {
+			if _, ok := sensitiveLogKeys[strings.ToLower(k)]; ok {
+				if s, isStr := x.(string); isStr && s != "" {
+					t[k] = "******"
+				}
+				continue
+			}
+			maskWalk(x)
+		}
+	case []interface{}:
+		for _, x := range t {
+			maskWalk(x)
+		}
+	}
 }
 
 func isPublic(path string) bool {
@@ -250,11 +297,20 @@ func isPublic(path string) bool {
 		pubs = append(pubs, strings.TrimRight(p, "/")+"/")
 	}
 	for _, p := range pubs {
-		if path == p || strings.HasPrefix(path, p) {
+		if publicMatch(path, p) {
 			return true
 		}
 	}
 	return false
+}
+
+// publicMatch：以 / 结尾按前缀匹配；否则要求完全相等或后跟 "/"，
+// 避免 "/docs" 误放行 "/docsfoo" 这类子串绕过。
+func publicMatch(path, entry string) bool {
+	if strings.HasSuffix(entry, "/") {
+		return strings.HasPrefix(path, entry)
+	}
+	return path == entry || strings.HasPrefix(path, entry+"/")
 }
 
 func Permission(slugs ...string) func(r *ghttp.Request) {
@@ -268,7 +324,7 @@ func Permission(slugs ...string) func(r *ghttp.Request) {
 			r.Middleware.Next()
 			return
 		}
-		perms := UserPerms(u)
+		perms := UserPerms(r.Context(), u)
 		set := map[string]struct{}{}
 		for _, p := range perms {
 			set[p] = struct{}{}
@@ -288,6 +344,6 @@ func Permission(slugs ...string) func(r *ghttp.Request) {
 	}
 }
 
-func UserPerms(u *ctxuser.User) []string {
-	return menusvc.UserPermissions(u)
+func UserPerms(ctx context.Context, u *ctxuser.User) []string {
+	return menusvc.UserPermissions(ctx, u)
 }

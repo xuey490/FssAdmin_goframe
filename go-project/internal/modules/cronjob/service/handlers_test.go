@@ -10,8 +10,14 @@ import (
 	"time"
 
 	"fssadmin/go-project/internal/shared/conf"
+	"fssadmin/go-project/internal/shared/ctxuser"
 	"github.com/gogf/gf/v2/frame/g"
 )
+
+// superCtx 构造带超管身份的 ctx：shell 任务自安全加固后仅超管可执行。
+func superCtx() context.Context {
+	return ctxuser.WithUser(context.Background(), &ctxuser.User{ID: 1, Username: "admin", IsSuper: true})
+}
 
 func TestBuiltinHandlersRegistered(t *testing.T) {
 	for _, name := range []string{backupCode, restoreCode, "log_cleanup", "http_request", "shell_command"} {
@@ -128,6 +134,12 @@ func TestHTTPRequestHandler(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	// httptest 服务在 127.0.0.1，会被 SSRF 防护拦截；
+	// 本测试只关心参数传递与状态码语义，替换掉校验缝隙后直连。
+	origGuard := ssrfGuard
+	ssrfGuard = func(string) error { return nil }
+	defer func() { ssrfGuard = origGuard }()
+
 	_, err := httpRequestHandler(context.Background(), &Task{Kwargs: map[string]interface{}{
 		"url": srv.URL, "method": "POST", "headers": `{"X-Token":"t1"}`,
 		"body": "hello", "expect_status": 200,
@@ -158,6 +170,21 @@ func TestHTTPRequestHandler(t *testing.T) {
 	}
 }
 
+// TestHTTPSSRFGuard SSRF 防护：内网/环回地址必须被拒绝。
+func TestHTTPSSRFGuard(t *testing.T) {
+	for _, url := range []string{
+		"http://127.0.0.1:8080/x",
+		"http://localhost/x",
+		"http://10.0.0.1/x",
+		"http://192.168.1.1/x",
+		"http://169.254.169.254/latest/meta-data/",
+	} {
+		if _, err := httpRequestHandler(context.Background(), &Task{Kwargs: map[string]interface{}{"url": url}}); err == nil {
+			t.Fatalf("内网地址应被拒绝: %s", url)
+		}
+	}
+}
+
 func TestHTTPRequestTimeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
@@ -167,6 +194,9 @@ func TestHTTPRequestTimeout(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	origGuard := ssrfGuard
+	ssrfGuard = func(string) error { return nil }
+	defer func() { ssrfGuard = origGuard }()
 	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
 	defer cancel()
 	_, err := httpRequestHandler(ctx, &Task{Kwargs: map[string]interface{}{"url": srv.URL, "expect_status": 0}})
@@ -176,7 +206,11 @@ func TestHTTPRequestTimeout(t *testing.T) {
 }
 
 func TestShellCommandHandler(t *testing.T) {
-	res, err := shellCommandHandler(context.Background(), &Task{Kwargs: map[string]interface{}{"command": "echo fssadmin-ok"}})
+	// 未带超管身份的 ctx 必须被拒绝（安全加固后的行为）。
+	if _, err := shellCommandHandler(context.Background(), &Task{Kwargs: map[string]interface{}{"command": "echo nope"}}); err == nil {
+		t.Fatal("非超管执行 shell 任务应被拒绝")
+	}
+	res, err := shellCommandHandler(superCtx(), &Task{Kwargs: map[string]interface{}{"command": "echo fssadmin-ok"}})
 	if err != nil {
 		t.Fatalf("命令应执行成功: %v", err)
 	}
@@ -184,7 +218,7 @@ func TestShellCommandHandler(t *testing.T) {
 	if !strings.Contains(text, "fssadmin-ok") || !strings.Contains(text, `"exit_code":0`) {
 		t.Fatalf("输出未包含预期内容: %s", text)
 	}
-	res, err = shellCommandHandler(context.Background(), &Task{Kwargs: map[string]interface{}{"command": "exit 3"}})
+	res, err = shellCommandHandler(superCtx(), &Task{Kwargs: map[string]interface{}{"command": "exit 3"}})
 	if err == nil {
 		t.Fatal("非零退出码应视为失败")
 	}

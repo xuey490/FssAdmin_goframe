@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"strings"
 
 	"fssadmin/go-project/internal/modules/menu/dao"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
-	"github.com/gogf/gf/v2/os/gctx"
 	"github.com/gogf/gf/v2/util/gconv"
 )
 
@@ -80,19 +80,19 @@ func filterTree(nodes []map[string]interface{}, name, path, status string) []map
 	return out
 }
 
-func Tree(r *ghttp.Request) (interface{}, error) { return navTree(ctxuser.Must(r), false) }
+func Tree(r *ghttp.Request) (interface{}, error) { return navTree(r.Context(), ctxuser.Must(r), false) }
 
 func UserTree(r *ghttp.Request) (interface{}, error) {
-	return UserMenuTree(ctxuser.Must(r))
+	return UserMenuTree(r.Context(), ctxuser.Must(r))
 }
 
-func UserMenuTree(u *ctxuser.User) ([]map[string]interface{}, error) {
-	ctx := gctx.New()
+// UserMenuTree 用户菜单树（带缓存）。ctx 由调用方传入请求上下文，保持链路与超时继承。
+func UserMenuTree(ctx context.Context, u *ctxuser.User) ([]map[string]interface{}, error) {
 	// 尝试命中缓存
 	if cached, ok := cachex.GetMenuTree(ctx, u.ID, u.TenantID); ok {
 		return cached, nil
 	}
-	data, err := navTree(u, true)
+	data, err := navTree(ctx, u, true)
 	if err != nil {
 		return nil, err
 	}
@@ -100,8 +100,8 @@ func UserMenuTree(u *ctxuser.User) ([]map[string]interface{}, error) {
 	return data, nil
 }
 
-func navTree(u *ctxuser.User, onlyUser bool) ([]map[string]interface{}, error) {
-	ids := MergedMenuIDs(u)
+func navTree(ctx context.Context, u *ctxuser.User, onlyUser bool) ([]map[string]interface{}, error) {
+	ids := MergedMenuIDs(ctx, u)
 	if len(ids) == 0 {
 		return []map[string]interface{}{}, nil
 	}
@@ -114,7 +114,7 @@ func navTree(u *ctxuser.User, onlyUser bool) ([]map[string]interface{}, error) {
 	if !onlyUser {
 		q = dao.Model().Where("status", 1).Where(hiddenCond).WhereIn("type", g.Slice{1, 2, 4}).Order("sort asc, id asc")
 	}
-	rows, err := q.All()
+	rows, err := q.Ctx(ctx).All()
 	if err != nil {
 		return nil, err
 	}
@@ -125,19 +125,19 @@ func navTree(u *ctxuser.User, onlyUser bool) ([]map[string]interface{}, error) {
 	return tree.Build(maps, "id", "parent_id", "children"), nil
 }
 
-func UserPermissions(u *ctxuser.User) []string {
+// UserPermissions 用户按钮权限（带缓存）。ctx 由调用方传入请求上下文。
+func UserPermissions(ctx context.Context, u *ctxuser.User) []string {
 	if u.IsSuper {
 		return []string{"*"}
 	}
-	ctx := gctx.New()
 	if cached, ok := cachex.GetPerms(ctx, u.ID, u.TenantID); ok {
 		return cached
 	}
-	ids := MergedMenuIDs(u)
+	ids := MergedMenuIDs(ctx, u)
 	if len(ids) == 0 {
 		return []string{}
 	}
-	arr, _ := dao.Model().WhereIn("id", ids).Where("status", 1).Where("slug IS NOT NULL AND slug<>''").Fields("slug").Array()
+	arr, _ := dao.Model().Ctx(ctx).WhereIn("id", ids).Where("status", 1).Where("slug IS NOT NULL AND slug<>''").Fields("slug").Array()
 	out := []string{}
 	seen := map[string]struct{}{}
 	for _, v := range arr {
@@ -156,7 +156,7 @@ func UserPermissions(u *ctxuser.User) []string {
 }
 
 func Perms(r *ghttp.Request) (interface{}, error) {
-	return UserPermissions(ctxuser.Must(r)), nil
+	return UserPermissions(r.Context(), ctxuser.Must(r)), nil
 }
 
 func PermissionTree(r *ghttp.Request) (interface{}, error) {
@@ -251,12 +251,12 @@ func DetailID(id int) (interface{}, error) {
 	return format(dbx.ToMap(rec)), nil
 }
 
-func MergedMenuIDs(u *ctxuser.User) []int {
-	ctx := gctx.New()
+// MergedMenuIDs 用户合并后的菜单 ID 集合（带缓存）。ctx 由调用方传入请求上下文。
+func MergedMenuIDs(ctx context.Context, u *ctxuser.User) []int {
 	if cached, ok := cachex.GetMenuIDs(ctx, u.ID, u.TenantID); ok {
 		return cached
 	}
-	ids := mergedMenuIDsDB(u)
+	ids := mergedMenuIDsDB(ctx, u)
 	if len(ids) > 0 {
 		cachex.SetMenuIDs(ctx, u.ID, u.TenantID, ids)
 	}
@@ -264,7 +264,7 @@ func MergedMenuIDs(u *ctxuser.User) []int {
 }
 
 // mergedMenuIDsDB 从数据库查询用户合并后的菜单 ID 集合（原始逻辑）。
-func mergedMenuIDsDB(u *ctxuser.User) []int {
+func mergedMenuIDsDB(ctx context.Context, u *ctxuser.User) []int {
 	if u.IsSuper {
 		arr, _ := dao.Model().Where("status", 1).Where("is_hidden", 2).Fields("id").Array()
 		ids := make([]int, 0, len(arr))

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"fssadmin/go-project/internal/shared/conf"
@@ -80,7 +81,16 @@ func XSS(r *ghttp.Request) {
 	}
 	r.URL.RawQuery = q.Encode()
 	ct := r.Header.Get("Content-Type")
-	if !strings.Contains(ct, "multipart/form-data") {
+	if strings.Contains(ct, "multipart/form-data") {
+		// multipart 文本字段同样要过滤（文件 part 不动），否则 origin_name 等可携带脚本载荷入库。
+		if form := r.GetMultipartForm(); form != nil {
+			for k, vals := range form.Value {
+				for i := range vals {
+					form.Value[k][i] = FilterXSS(vals[i])
+				}
+			}
+		}
+	} else {
 		body := r.GetBody()
 		if len(body) > 0 {
 			r.Body = io.NopCloser(bytes.NewReader(sanitizeBody(ct, body)))
@@ -144,25 +154,27 @@ func skipLimit(path string) bool {
 		paths = append(paths, strings.TrimRight(p, "/")+"/")
 	}
 	for _, p := range paths {
-		if path == p || strings.HasPrefix(path, p) {
+		if publicMatch(path, p) {
 			return true
 		}
 	}
 	return false
 }
 
+// incrExpireScript 原子 INCR+EXPIRE：避免 INCR 成功而 EXPIRE 失败时键永不过期，
+// 导致该 IP 被永久限流。
+var incrExpireScript = `local n = redis.call('INCR', KEYS[1])
+if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+return n`
+
 func hitLimit(r *ghttp.Request, ip string, times, seconds int) (int, error) {
 	if seconds <= 0 {
 		seconds = 60
 	}
 	key := conf.RateLimitPrefix() + ip
-	v, err := g.Redis().Do(r.Context(), "INCR", key)
-	if err == nil && v != nil {
-		n := v.Int()
-		if n == 1 {
-			_, _ = g.Redis().Do(r.Context(), "EXPIRE", key, seconds)
-		}
-		return n, nil
+	v, err := g.Redis().Do(r.Context(), "EVAL", incrExpireScript, "1", key, seconds)
+	if err == nil && v != nil && !v.IsEmpty() {
+		return v.Int(), nil
 	}
 	return memHit(key, seconds), nil
 }
@@ -176,6 +188,8 @@ type memBucket struct {
 // ponytail: process-local fallback when Redis is down; upgrade is Redis INCR (already primary).
 var memRL sync.Map
 
+var memRLSweep atomic.Bool
+
 func memHit(key string, seconds int) int {
 	now := time.Now()
 	raw, _ := memRL.LoadOrStore(key, &memBucket{exp: now.Add(time.Duration(seconds) * time.Second)})
@@ -187,7 +201,28 @@ func memHit(key string, seconds int) int {
 		b.exp = now.Add(time.Duration(seconds) * time.Second)
 	}
 	b.n++
+	// 低频触发过期桶清扫，防止 Redis 故障期间内存桶无限增长。
+	if memRLSweep.CompareAndSwap(false, true) {
+		go memRLCleanup()
+	}
 	return b.n
+}
+
+func memRLCleanup() {
+	time.Sleep(30 * time.Second)
+	now := time.Now()
+	memRL.Range(func(k, v interface{}) bool {
+		if b, ok := v.(*memBucket); ok {
+			b.mu.Lock()
+			expired := now.After(b.exp)
+			b.mu.Unlock()
+			if expired {
+				memRL.Delete(k)
+			}
+		}
+		return true
+	})
+	memRLSweep.Store(false)
 }
 
 // xssPolicy matches Python bleach allow-tags (notice HTML) without style=.

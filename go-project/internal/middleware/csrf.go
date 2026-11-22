@@ -26,9 +26,11 @@ func CSRF(r *ghttp.Request) {
 	if token == "" {
 		token = guid.S()
 	}
+	// TLS 或反代声明 https 时携带 Secure 标志；localhost/127.0.0.1 的浏览器视其为可信源不受影响。
+	secure := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 	r.Cookie.SetHttpCookie(&http.Cookie{
 		Name: csrfCookie, Value: token, Path: "/", HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		Secure: secure, SameSite: http.SameSiteLaxMode,
 	})
 	if csrfAllowed(r.Method, r.Header.Get("Authorization"), r.Header.Get(csrfHeader), token, csrfExempt(r.URL.Path)) {
 		r.Middleware.Next()
@@ -54,7 +56,8 @@ func csrfAllowed(method, authorization, headerToken, cookieToken string, public 
 
 func csrfExempt(path string) bool {
 	// 刷新令牌时访问令牌已经失效，请求里没有 Bearer。
-	return isPublic(path) || strings.Contains(path, "/core/refresh") || strings.Contains(path, "/core/logout")
+	// 用后缀匹配而非 Contains，避免 "/aaa/core/refreshbbb" 这类子串误豁免。
+	return isPublic(path) || strings.HasSuffix(path, "/core/refresh") || strings.HasSuffix(path, "/core/logout")
 }
 
 func hasBearer(h string) bool {

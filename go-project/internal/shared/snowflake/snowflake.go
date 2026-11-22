@@ -77,16 +77,16 @@ func (s *Snowflake) NextID() int64 {
 
 	// 系统时钟回拨
 	if timestamp < s.lastTimestamp {
-		// 等待到上一毫秒（最多等待 5ms，超过则报错）
 		diff := s.lastTimestamp - timestamp
 		if diff <= 5 {
+			// 小回拨：等待追平即可。
 			time.Sleep(time.Duration(diff) * time.Millisecond)
 			timestamp = timeNowMillis()
 		} else {
-			// 时钟回拨过大，拒绝生成
-			// 这里采用等待策略而非报错，避免中断服务
-			time.Sleep(time.Duration(diff) * time.Millisecond)
-			timestamp = timeNowMillis()
+			// 大回拨：直接把时间戳基准向前推，绝不能 Sleep(diff)——
+			// 回拨 1 小时会让持锁的 NextID 阻塞 1 小时，所有调用方跟着挂死。
+			// 代价新 ID 的时间戳短暂领先物理时钟，唯一性不受影响。
+			timestamp = s.lastTimestamp + 1
 		}
 	}
 

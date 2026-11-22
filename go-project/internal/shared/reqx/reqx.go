@@ -2,7 +2,10 @@ package reqx
 
 import (
 	"encoding/json"
+	"net"
 	"strings"
+
+	"fssadmin/go-project/internal/shared/conf"
 
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
@@ -122,12 +125,63 @@ func Ints(m g.Map, keys ...string) []int {
 	return nil
 }
 
+// ClientIP 获取客户端真实 IP。
+// 安全：仅当直连地址（RemoteAddr）命中可信代理列表（app.trustedProxies，默认本机回环）
+// 时才信任 X-Forwarded-For / X-Real-IP，取 XFF 最右侧一跳（由可信反代追加、不可伪造）；
+// 否则直接使用直连地址，防止伪造 XFF 绕过限流与 IP 黑白名单。
 func ClientIP(r *ghttp.Request) string {
-	if x := r.Header.Get("X-Forwarded-For"); x != "" {
-		return strings.TrimSpace(strings.Split(x, ",")[0])
+	remote := remoteHost(r)
+	if !isTrustedProxy(remote) {
+		return remote
 	}
-	if x := r.Header.Get("X-Real-IP"); x != "" {
+	if x := r.Header.Get("X-Forwarded-For"); x != "" {
+		parts := strings.Split(x, ",")
+		// XFF 由代理逐跳追加：最后一段才是可信代理看到的来源。
+		for i := len(parts) - 1; i >= 0; i-- {
+			if ip := strings.TrimSpace(parts[i]); ip != "" {
+				return ip
+			}
+		}
+	}
+	if x := strings.TrimSpace(r.Header.Get("X-Real-IP")); x != "" {
 		return x
 	}
-	return r.GetClientIp()
+	return remote
+}
+
+func remoteHost(r *ghttp.Request) string {
+	// 注意：不能用 GetClientIp()——它内部优先读 X-Forwarded-For（gf v2.10.5
+	// ghttp_request.go:201），会架空可信代理校验。这里只用 TCP 对端地址。
+	addr := r.GetRemoteIp()
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return strings.Trim(addr, "[]")
+}
+
+func isTrustedProxy(ip string) bool {
+	if ip == "" {
+		return false
+	}
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	for _, rule := range conf.TrustedProxies() {
+		rule = strings.TrimSpace(rule)
+		if rule == "" {
+			continue
+		}
+		if rule == ip {
+			return true
+		}
+		if strings.Contains(rule, "/") {
+			if _, cidr, err := net.ParseCIDR(rule); err == nil && cidr.Contains(parsed) {
+				return true
+			}
+		} else if p := net.ParseIP(rule); p != nil && p.Equal(parsed) {
+			return true
+		}
+	}
+	return false
 }

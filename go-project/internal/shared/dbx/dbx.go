@@ -223,7 +223,9 @@ func FilterLike(m *gdb.Model, col, val string) *gdb.Model {
 	if val == "" {
 		return m
 	}
-	return m.WhereLike(col, "%"+val+"%")
+	// 转义 LIKE 通配符：用户输入 "%%" 不再恒真，避免全表扫描与语义歧义。
+	escape := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(val)
+	return m.WhereLike(col, "%"+escape+"%")
 }
 
 func IntIDs(v interface{}) []int {

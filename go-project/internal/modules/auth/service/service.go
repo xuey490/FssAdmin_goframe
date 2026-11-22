@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -79,6 +80,46 @@ func tenantValid(t g.Map) bool {
 	return tm.After(time.Now())
 }
 
+// loginFailKey 登录失败计数的 Redis 键（用户名+租户维度）。
+func loginFailKey(username string, tenantID int) string {
+	return fmt.Sprintf("login:fail:%d:%s", tenantID, strings.ToLower(username))
+}
+
+// loginFailCount 只读查询失败计数与剩余锁定秒数（检查不能计数）。
+func loginFailCount(username string, tenantID int) (int, int) {
+	key := loginFailKey(username, tenantID)
+	v, err := g.Redis().Do(context.Background(), "GET", key)
+	if err != nil || v.IsEmpty() {
+		return 0, 0
+	}
+	n := v.Int()
+	if n >= conf.LoginMaxFails() {
+		ttl, _ := g.Redis().Do(context.Background(), "TTL", key)
+		return n, ttl.Int()
+	}
+	return n, 0
+}
+
+// loginFailRecord 记录一次登录失败（原子 INCR+EXPIRE），返回当前次数。
+func loginFailRecord(username string, tenantID int) int {
+	key := loginFailKey(username, tenantID)
+	v, err := g.Redis().Do(context.Background(), "EVAL", incrExpireLua, "1", key, conf.LoginLockSeconds())
+	if err != nil || v.IsEmpty() {
+		return 0
+	}
+	return v.Int()
+}
+
+// loginFailReset 登录成功后清除失败计数。
+func loginFailReset(username string, tenantID int) {
+	_, _ = g.Redis().Do(context.Background(), "DEL", loginFailKey(username, tenantID))
+}
+
+// incrExpireLua 原子 INCR+EXPIRE，与限流共用语义。
+const incrExpireLua = `local n = redis.call('INCR', KEYS[1])
+if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+return n`
+
 func Login(r *ghttp.Request) (interface{}, error) {
 	m := reqx.Merge(r)
 	username := reqx.Str(m, "username")
@@ -94,12 +135,18 @@ func Login(r *ghttp.Request) (interface{}, error) {
 	if tenantID == 0 {
 		return nil, biz.Bad("租户ID不能为空")
 	}
+	// 登录失败锁定：连续失败 N 次后锁定一段时间，独立于全局限流，防密码爆破。
+	if _, lock := loginFailCount(username, tenantID); lock > 0 {
+		dao.WriteLoginLog(username, ip, osName, browser, location, "失败次数过多已锁定", 2)
+		return nil, biz.Forbidden(fmt.Sprintf("失败次数过多，请 %d 分钟后再试", max(1, lock/60)))
+	}
 	if conf.CaptchaEnable() && !authkit.VerifyCaptcha(reqx.Str(m, "uuid"), reqx.Str(m, "code")) {
 		return nil, biz.Bad("验证码错误或已过期")
 	}
 	user, err := dao.UserByName(username)
 	if err != nil || user.IsEmpty() || !authkit.Check(password, user["password"].String()) {
 		dao.WriteLoginLog(username, ip, osName, browser, location, "用户名或密码错误", 2)
+		loginFailRecord(username, tenantID)
 		return nil, biz.Bad("用户名或密码错误")
 	}
 	if user["status"].Int() != 1 {
@@ -119,6 +166,7 @@ func Login(r *ghttp.Request) (interface{}, error) {
 		dao.WriteLoginLog(username, ip, osName, browser, location, "租户无效或已过期", 2)
 		return nil, biz.Forbidden("租户无效或已过期")
 	}
+	loginFailReset(username, tenantID)
 	_, _ = dbx.Alive(dbx.Model("sa_system_user")).Where("id", user["id"].Int()).Data(g.Map{
 		"login_time": dbx.Now(), "login_ip": ip,
 	}).Update()
@@ -145,8 +193,8 @@ func issue(ctx context.Context, user g.Map, tenantID int, ip, osName, browser st
 		return nil, err
 	}
 	u := &ctxuser.User{ID: uid, Username: gconv.String(user["username"]), Realname: realname, IsSuper: isSuper, TenantID: tenantID, Status: 1}
-	menus, _ := menusvc.UserMenuTree(u)
-	perms := menusvc.UserPermissions(u)
+	menus, _ := menusvc.UserMenuTree(ctx, u)
+	perms := menusvc.UserPermissions(ctx, u)
 	return g.Map{
 		"access_token": pair.AccessToken, "refresh_token": pair.RefreshToken,
 		"token_type": pair.TokenType, "expires_in": pair.ExpiresIn, "tenant_id": tenantID,
@@ -165,6 +213,11 @@ func Refresh(r *ghttp.Request) (interface{}, error) {
 	user, err := dao.UserByID(uid)
 	if err != nil || user.IsEmpty() {
 		return nil, biz.Unauthorized("用户不存在")
+	}
+	// 禁用用户不允许换取新令牌。
+	if user["status"].Int() != 1 {
+		authkit.InvalidateUser(uid)
+		return nil, biz.Unauthorized("账号已被禁用")
 	}
 	tid := 0
 	uts, _ := dao.UserTenants(uid)
@@ -236,7 +289,7 @@ func CurrentUser(r *ghttp.Request) (interface{}, error) {
 		return nil, biz.Unauthorized("用户不存在")
 	}
 	m := dbx.ToMap(user)
-	perms := menusvc.UserPermissions(u)
+	perms := menusvc.UserPermissions(r.Context(), u)
 	roles := dao.RoleCodes(u.ID, u.TenantID, u.IsSuper)
 	var dept interface{}
 	if gconv.Int(m["dept_id"]) > 0 {
@@ -266,11 +319,11 @@ func CurrentUser(r *ghttp.Request) (interface{}, error) {
 }
 
 func UserMenus(r *ghttp.Request) (interface{}, error) {
-	return menusvc.UserMenuTree(ctxuser.Must(r))
+	return menusvc.UserMenuTree(r.Context(), ctxuser.Must(r))
 }
 
 func Permissions(r *ghttp.Request) (interface{}, error) {
-	return menusvc.UserPermissions(ctxuser.Must(r)), nil
+	return menusvc.UserPermissions(r.Context(), ctxuser.Must(r)), nil
 }
 
 func DictAll(r *ghttp.Request) (interface{}, error) {
@@ -326,6 +379,9 @@ func ClearCache(r *ghttp.Request) (interface{}, error) {
 
 func PublicConfig(r *ghttp.Request) (interface{}, error) {
 	key := r.Get("key").String()
+	if !isPublicConfigKey(key) {
+		return nil, biz.NotFound("配置项不存在")
+	}
 	if val, ok := cachex.ConfigValue(r.Context(), key); ok {
 		return g.Map{"key": key, "value": val}, nil
 	}
@@ -335,6 +391,17 @@ func PublicConfig(r *ghttp.Request) (interface{}, error) {
 		val = rec["value"].String()
 	}
 	return g.Map{"key": key, "value": val}, nil
+}
+
+// isPublicConfigKey 公开配置接口只放行白名单 key（app.publicConfigKeys，默认 site_* 系列），
+// 防止未登录用户逐 key 枚举读取 SMTP 密码等敏感配置。
+func isPublicConfigKey(key string) bool {
+	for _, k := range conf.PublicConfigKeys() {
+		if k != "" && k == key {
+			return true
+		}
+	}
+	return false
 }
 
 func Statistics(r *ghttp.Request) (interface{}, error) {

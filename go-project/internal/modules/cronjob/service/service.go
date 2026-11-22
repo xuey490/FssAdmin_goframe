@@ -82,7 +82,8 @@ func NodeTypes(r *ghttp.Request) (interface{}, error) {
 // ---------------------------------------------------------------------------
 
 func Options(r *ghttp.Request) (interface{}, error) {
-	rows, err := dao.NodeModel().Fields("id,name,code,func,args,kwargs").All()
+	// 限当前租户：下拉选项不暴露其他租户的节点。
+	rows, err := dbx.ScopedModel(r, dao.NodeTable).Fields("id,name,code,func,args,kwargs").All()
 	if err != nil {
 		return nil, err
 	}
@@ -146,8 +147,27 @@ func fillLastRuns(ctx context.Context, items []map[string]interface{}) {
 	if len(ids) == 0 {
 		return
 	}
-	rows, err := g.DB().Model(dao.JobTable).Ctx(ctx).
+	// 先按 job_id 取 MAX(id)，再只回查这批最近记录：
+	// 旧实现 Order("id desc").All() 会把节点全部历史日志（含 result 大字段）拉进内存。
+	maxRows, err := g.DB().Model(dao.JobTable).Ctx(ctx).
 		WhereIn("job_id", ids).WhereNull("delete_time").
+		Fields("job_id, MAX(id) AS max_id").
+		Group("job_id").All()
+	if err != nil {
+		g.Log().Warningf(ctx, "cronjob: 读取最近执行记录失败: %v", err)
+		return
+	}
+	maxIDs := make([]int, 0, len(maxRows))
+	for _, rec := range maxRows {
+		if mid := rec["max_id"].Int(); mid > 0 {
+			maxIDs = append(maxIDs, mid)
+		}
+	}
+	if len(maxIDs) == 0 {
+		return
+	}
+	rows, err := g.DB().Model(dao.JobTable).Ctx(ctx).
+		WhereIn("id", maxIDs).
 		Fields("job_id,status,error,result,job_state,create_time").
 		Order("id desc").All()
 	if err != nil {
@@ -329,7 +349,9 @@ func NodeDelete(r *ghttp.Request) (interface{}, error) {
 }
 
 func NodeClear(r *ghttp.Request) (interface{}, error) {
-	if _, err := dao.NodeModel().Data(g.Map{"delete_time": dbx.Now()}).Update(); err != nil {
+	// 只清当前租户的节点：清空全部租户属于跨租户破坏。
+	if _, err := dbx.ScopedModel(r, dao.NodeTable).
+		Data(g.Map{"delete_time": dbx.Now()}).Update(); err != nil {
 		return nil, err
 	}
 	resyncAll(r.Context())
@@ -344,7 +366,8 @@ func NodeBatch(r *ghttp.Request) (interface{}, error) {
 	if len(ids) == 0 {
 		return g.Map{}, biz.Bad("请选择要操作的数据")
 	}
-	if _, err := dao.NodeModel().WhereIn("id", ids).
+	// 限当前租户：防跨租户批量启停他人节点。
+	if _, err := dbx.ScopedModel(r, dao.NodeTable).WhereIn("id", ids).
 		Data(g.Map{"status": st, "update_time": dbx.Now()}).Update(); err != nil {
 		return nil, err
 	}
@@ -363,7 +386,7 @@ func NodeBatch(r *ghttp.Request) (interface{}, error) {
 //     同时把触发器写回节点并置为启用，保证进程重启后仍按此触发器注册。
 func NodeExecute(r *ghttp.Request) (interface{}, error) {
 	id := r.Get("id").Int()
-	rec, err := dao.NodeModel().Where("id", id).One()
+	rec, err := dbx.ScopedModel(r, dao.NodeTable).Where("id", id).One()
 	if err != nil || rec.IsEmpty() {
 		return nil, biz.NotFound("节点不存在")
 	}
@@ -439,7 +462,9 @@ func openJobLog(ctx context.Context, nodeID int, name, triggerType, pattern stri
 		"started_at": started.Format(time.DateTime),
 	}
 	raw, _ := json.Marshal(state)
-	jobID, err := dbx.Model(dao.JobTable).Data(g.Map{
+	// WithoutCancel：手工触发时 ctx 挂在请求上，浏览器一关请求 ctx 就取消，
+	// 执行日志会停在「执行中」。任务日志的状态机必须独立于请求生命周期。
+	jobID, err := dbx.Model(dao.JobTable).Ctx(context.WithoutCancel(ctx)).Data(g.Map{
 		"job_id": gconv.String(nodeID), "job_name": name, "trigger_type": triggerType,
 		"status": 1, "next_run_time": fmtTime(plannedAt), "job_state": string(raw),
 		"uuid": guid.S(), "create_time": dbx.Now(), "update_time": dbx.Now(), "tenant_id": tenantID,
@@ -515,5 +540,6 @@ func JobLogDetail(r *ghttp.Request) (interface{}, error) {
 
 func JobLogDelete(r *ghttp.Request) (interface{}, error) {
 	ids := reqx.Ints(reqx.Merge(r), "ids")
-	return g.Map{}, dbx.SoftDeleteIDs(dao.JobTable, ids)
+	// 限当前租户：防跨租户删除他人执行日志。
+	return g.Map{}, dbx.SoftDeleteIDsScopedRequest(r, dao.JobTable, ids)
 }
