@@ -91,6 +91,9 @@ func mapColumn(m map[string]interface{}) g.Map {
 }
 
 func TableList(r *ghttp.Request) (interface{}, error) {
+	if err := guard(); err != nil {
+		return nil, err
+	}
 	rows, err := g.DB().Raw("SHOW TABLE STATUS").All()
 	if err != nil {
 		return nil, err
@@ -162,6 +165,10 @@ func RecycleDestroy(r *ghttp.Request) (interface{}, error) {
 	if table == "" || len(ids) == 0 {
 		return g.Map{}, nil
 	}
+	// 表名必须通过白名单校验，防止对任意表（如 sa_system_user）执行物理删除。
+	if !validTable(table) {
+		return nil, biz.Bad("表名格式不正确")
+	}
 	_, err := dbx.Model(table).WhereIn("id", ids).Delete()
 	return g.Map{}, err
 }
@@ -173,6 +180,9 @@ func RecycleRecovery(r *ghttp.Request) (interface{}, error) {
 	m := reqx.Merge(r)
 	table := reqx.Str(m, "table_name", "table")
 	ids := reqx.Ints(m, "ids")
+	if !validTable(table) {
+		return nil, biz.Bad("表名格式不正确")
+	}
 	_, err := dbx.Model(table).WhereIn("id", ids).Data(g.Map{"delete_time": nil}).Update()
 	return g.Map{}, err
 }

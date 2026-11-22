@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"fmt"
+	"mime"
+	"regexp"
 
 	"fssadmin/go-project/internal/modules/gencode/dao"
 	"fssadmin/go-project/internal/shared/biz"
@@ -50,8 +52,19 @@ func Destroy(r *ghttp.Request) (interface{}, error) {
 	return spec.Delete(r)
 }
 
+// validTableIdent 表名白名单校验：只允许字母/数字/下划线，
+// 与 dbmaint 保持一致。表名来自请求，直接拼 SQL 前必须校验（防反引号闭合注入）。
+var tableIdentRe = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+
+func validTableIdent(name string) bool {
+	return tableIdentRe.MatchString(name)
+}
+
 func GetTableColumns(r *ghttp.Request) (interface{}, error) {
 	name := r.Get("table_name").String()
+	if !validTableIdent(name) {
+		return nil, biz.Bad("表名格式不正确")
+	}
 	rows, err := g.DB().Raw("SHOW FULL COLUMNS FROM `" + name + "`").All()
 	if err != nil {
 		return nil, err
@@ -67,6 +80,9 @@ func LoadTable(r *ghttp.Request) (interface{}, error) {
 	}
 	for _, name := range names {
 		if name == "" {
+			continue
+		}
+		if !validTableIdent(name) {
 			continue
 		}
 		id, err := dbx.Model(dao.Table).Data(g.Map{
@@ -127,7 +143,7 @@ func Generate(r *ghttp.Request) (interface{}, error) {
 	_, _ = fw.Write([]byte("package models\n\ntype Entity struct{ Id int `json:\"id\"` }\n"))
 	_ = w.Close()
 	r.Response.Header().Set("Content-Type", "application/zip")
-	r.Response.Header().Set("Content-Disposition", "attachment; filename="+name+".zip")
+	r.Response.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name + ".zip"}))
 	r.Response.Write(buf.Bytes())
 	r.ExitAll()
 	return nil, nil

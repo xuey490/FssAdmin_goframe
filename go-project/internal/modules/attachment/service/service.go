@@ -96,6 +96,19 @@ func CategoryCreate(r *ghttp.Request) (interface{}, error) { return catSpec.Crea
 func CategoryUpdate(r *ghttp.Request) (interface{}, error) { return catSpec.Update(r) }
 func CategoryDelete(r *ghttp.Request) (interface{}, error) { return catSpec.Delete(r) }
 
+// uploadAllowedExt 上传扩展名白名单。
+// 安全：原实现仅黑名单（php/exe/sh/bat），html/svg 等可被上传后在同源静态目录
+// 被浏览器渲染为 XSS 载体。改为白名单后，可执行内容一律拒绝；
+// svg 因可携带 script 虽常用于图标，仍从默认白名单移除（有需要可加入并配合 StaticGuard）。
+var uploadAllowedExt = map[string]struct{}{
+	"jpg": {}, "jpeg": {}, "png": {}, "gif": {}, "bmp": {}, "webp": {}, "ico": {},
+	"txt": {}, "md": {}, "csv": {}, "pdf": {},
+	"doc": {}, "docx": {}, "xls": {}, "xlsx": {}, "ppt": {}, "pptx": {}, "wps": {},
+	"zip": {}, "rar": {}, "7z": {}, "gz": {},
+	"mp4": {}, "mp3": {}, "wav": {}, "webm": {},
+	"pem": {}, "crt": {},
+}
+
 func Upload(r *ghttp.Request) (interface{}, error) {
 	file := r.GetUploadFile("file")
 	if file == nil {
@@ -105,7 +118,7 @@ func Upload(r *ghttp.Request) (interface{}, error) {
 		return nil, biz.Bad("文件过大")
 	}
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(file.Filename), "."))
-	if ext == "php" || ext == "exe" || ext == "sh" || ext == "bat" {
+	if _, ok := uploadAllowedExt[ext]; !ok {
 		return nil, biz.Bad("不允许的文件类型")
 	}
 	day := time.Now().Format("2006/01/02")
@@ -117,24 +130,27 @@ func Upload(r *ghttp.Request) (interface{}, error) {
 		return nil, err
 	}
 	final := filepath.Join(dir, name)
-		_ = os.Rename(filepath.Join(dir, saved), final)
-		rel := filepath.ToSlash(filepath.Join(day, name))
-		pub := PublicURL(day, name)
-		u := ctxuser.Must(r)
-		cid := gconv.Int(r.GetForm("category_id", 1))
-		id, err := dbx.Model(dao.Table).Data(g.Map{
-			"category_id": cid, "storage_mode": 1, "origin_name": file.Filename,
-			"object_name": name, "mime_type": file.Header.Get("Content-Type"),
-			"storage_path": rel, "suffix": ext, "size_byte": file.Size,
-			"size_info": fmt.Sprintf("%.1fKB", float64(file.Size)/1024),
-			"url":       pub, "created_by": u.ID, "create_time": dbx.Now(), "update_time": dbx.Now(),
-		}).InsertAndGetId()
-		if err != nil {
-			return nil, err
-		}
-		rec, _ := dao.Model().Where("id", id).One()
-		return decorateURLMap(dbx.ToMap(rec)), nil
+	// 落盘名与库里的记录必须一致：改名失败还往下走会让 URL 指向不存在的文件。
+	if err := os.Rename(filepath.Join(dir, saved), final); err != nil {
+		return nil, err
 	}
+	rel := filepath.ToSlash(filepath.Join(day, name))
+	pub := PublicURL(day, name)
+	u := ctxuser.Must(r)
+	cid := gconv.Int(r.GetForm("category_id", 1))
+	id, err := dbx.Model(dao.Table).Data(g.Map{
+		"category_id": cid, "storage_mode": 1, "origin_name": gfile.Basename(file.Filename),
+		"object_name": name, "mime_type": file.Header.Get("Content-Type"),
+		"storage_path": rel, "suffix": ext, "size_byte": file.Size,
+		"size_info": fmt.Sprintf("%.1fKB", float64(file.Size)/1024),
+		"url":       pub, "created_by": u.ID, "create_time": dbx.Now(), "update_time": dbx.Now(),
+	}).InsertAndGetId()
+	if err != nil {
+		return nil, err
+	}
+	rec, _ := dao.Model().Where("id", id).One()
+	return decorateURLMap(dbx.ToMap(rec)), nil
+}
 
 func ChunkUpload(r *ghttp.Request) (interface{}, error) {
 	return Upload(r)
