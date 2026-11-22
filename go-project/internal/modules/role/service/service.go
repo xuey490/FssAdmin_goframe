@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+
 	menusvc "fssadmin/go-project/internal/modules/menu/service"
 	"fssadmin/go-project/internal/modules/role/dao"
 	"fssadmin/go-project/internal/shared/biz"
@@ -13,6 +15,7 @@ import (
 	"fssadmin/go-project/internal/shared/response"
 	"fssadmin/go-project/internal/shared/tree"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 	"github.com/gogf/gf/v2/util/gconv"
@@ -174,18 +177,25 @@ func AssignMenus(r *ghttp.Request) (interface{}, error) {
 		return nil, biz.NotFound("角色不存在或无权操作")
 	}
 	ids := menusvc.ExpandParents(reqx.Ints(reqx.Merge(r), "menu_ids"))
-	if _, err := dbx.Model("sa_system_role_menu").Where("role_id", id).Delete(); err != nil {
+	// 事务包裹「删旧插新」，避免中途失败导致角色菜单关联丢失。
+	err := g.DB().Transaction(r.Context(), func(ctx context.Context, tx gdb.TX) error {
+		if _, err := tx.Ctx(ctx).Model("sa_system_role_menu").Where("role_id", id).Delete(); err != nil {
+			return err
+		}
+		for _, mid := range ids {
+			if mid <= 0 {
+				continue
+			}
+			if _, err := tx.Ctx(ctx).Model("sa_system_role_menu").Data(g.Map{
+				"role_id": id, "menu_id": mid,
+			}).Insert(); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
-	}
-	for _, mid := range ids {
-		if mid <= 0 {
-			continue
-		}
-		if _, err := dbx.Model("sa_system_role_menu").Data(g.Map{
-			"role_id": id, "menu_id": mid,
-		}).Insert(); err != nil {
-			return nil, err
-		}
 	}
 	cachex.InvalidateAllMenuTree(r.Context())
 	return g.Map{}, nil

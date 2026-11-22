@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"strings"
 
 	"fssadmin/go-project/internal/authkit"
@@ -14,6 +15,7 @@ import (
 	"fssadmin/go-project/internal/shared/reqx"
 	"fssadmin/go-project/internal/shared/response"
 
+	"github.com/gogf/gf/v2/database/gdb"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/net/ghttp"
 	"github.com/gogf/gf/v2/util/gconv"
@@ -46,49 +48,101 @@ func List(r *ghttp.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-		list := dbx.ToMaps(rows)
-		for _, item := range list {
-			fillUser(item, gconv.Int(item["tenant_id"]))
-		}
-		return response.Page(list, total, pg, limit), nil
-	}
+	list := dbx.ToMaps(rows)
+	fillUsersBatch(list)
+	return response.Page(list, total, pg, limit), nil
+}
 
-	func fillUser(item map[string]interface{}, tid int) {
+// fillUsersBatch 按页内 user_id 集合批量查询 roles/posts/dept，
+// 避免旧实现每行 3 次查询的 N+1（limit 上限 500 时最坏 1500 条 SQL）。
+func fillUsersBatch(list []map[string]interface{}) {
+	ids := make([]int, 0, len(list))
+	tids := map[int]int{}
+	deptIDs := map[int]struct{}{}
+	for _, item := range list {
 		id := gconv.Int(item["id"])
-		if tid <= 0 {
-			tid = gconv.Int(item["tenant_id"])
-		}
+		ids = append(ids, id)
+		tid := gconv.Int(item["tenant_id"])
 		if tid <= 0 {
 			tid = 1
 		}
+		tids[id] = tid
 		item["tenant_id"] = tid
-		roles, _ := dbx.DB().Raw(`SELECT r.id,r.name,r.code FROM sa_system_user_role ur JOIN sa_system_role r ON r.id=ur.role_id WHERE ur.user_id=? AND ur.tenant_id=? AND ur.delete_time IS NULL AND r.delete_time IS NULL`, id, tid).All()
-		rm := dbx.ToMaps(roles)
+		item["nickname"] = item["realname"]
+		if did := gconv.Int(item["dept_id"]); did > 0 {
+			deptIDs[did] = struct{}{}
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	roleBy := map[int][]map[string]interface{}{}
+	if rows, err := dbx.DB().Raw(
+		`SELECT ur.user_id, r.id, r.name, r.code FROM sa_system_user_role ur JOIN sa_system_role r ON r.id=ur.role_id
+		 WHERE ur.delete_time IS NULL AND r.delete_time IS NULL AND ur.user_id IN (?)`, ids).All(); err == nil {
+		for _, rec := range rows {
+			uid := rec["user_id"].Int()
+			roleBy[uid] = append(roleBy[uid], g.Map{
+				"id": rec["id"], "name": rec["name"], "code": rec["code"], "tenant_id": tids[uid],
+			})
+		}
+	}
+	postBy := map[int][]map[string]interface{}{}
+	if rows, err := dbx.DB().Raw(
+		`SELECT up.user_id, p.id, p.name, p.code FROM sa_system_user_post up JOIN sa_system_post p ON p.id=up.post_id
+		 WHERE up.delete_time IS NULL AND p.delete_time IS NULL AND up.user_id IN (?)`, ids).All(); err == nil {
+		for _, rec := range rows {
+			uid := rec["user_id"].Int()
+			postBy[uid] = append(postBy[uid], g.Map{
+				"id": rec["id"], "name": rec["name"], "code": rec["code"], "tenant_id": tids[uid],
+			})
+		}
+	}
+	deptBy := map[int]map[string]interface{}{}
+	if len(deptIDs) > 0 {
+		dids := make([]int, 0, len(deptIDs))
+		for d := range deptIDs {
+			dids = append(dids, d)
+		}
+		if rows, err := dbx.Alive(dbx.Model("sa_system_dept")).WhereIn("id", dids).All(); err == nil {
+			for _, rec := range rows {
+				deptBy[rec["id"].Int()] = dbx.ToMap(rec)
+			}
+		}
+	}
+	for _, item := range list {
+		id := gconv.Int(item["id"])
+		rm := roleBy[id]
+		if rm == nil {
+			rm = []map[string]interface{}{}
+		}
 		item["roles"] = rm
 		item["roleList"] = rm
 		item["role_ids"] = idsOf(rm)
-		posts, _ := dbx.DB().Raw(`SELECT p.id,p.name,p.code FROM sa_system_user_post up JOIN sa_system_post p ON p.id=up.post_id WHERE up.user_id=? AND up.tenant_id=? AND up.delete_time IS NULL AND p.delete_time IS NULL`, id, tid).All()
-		pm := dbx.ToMaps(posts)
+		pm := postBy[id]
+		if pm == nil {
+			pm = []map[string]interface{}{}
+		}
 		item["posts"] = pm
 		item["postList"] = pm
 		item["post_ids"] = idsOf(pm)
-		item["nickname"] = item["realname"]
 		if did := gconv.Int(item["dept_id"]); did > 0 {
-			if rec, _ := dbx.Alive(dbx.Model("sa_system_dept")).Where("id", did).One(); !rec.IsEmpty() {
-				item["dept"] = dbx.ToMap(rec)
+			if dept, ok := deptBy[did]; ok {
+				item["dept"] = dept
 			}
 		}
 	}
+}
 
-	func idsOf(rows []map[string]interface{}) []int {
-		ids := make([]int, 0, len(rows))
-		for _, row := range rows {
-			if n := gconv.Int(row["id"]); n > 0 {
-				ids = append(ids, n)
-			}
+func idsOf(rows []map[string]interface{}) []int {
+	ids := make([]int, 0, len(rows))
+	for _, row := range rows {
+		if n := gconv.Int(row["id"]); n > 0 {
+			ids = append(ids, n)
 		}
-		return ids
 	}
+	return ids
+}
 
 func Selector(r *ghttp.Request) (interface{}, error) {
 	return List(r)
@@ -100,13 +154,9 @@ func Detail(r *ghttp.Request) (interface{}, error) {
 	if err != nil || rec.IsEmpty() {
 		return nil, biz.NotFound("用户不存在")
 	}
-		m := dbx.ToMap(rec)
-		tid := 0
-		if u := ctxuser.Get(r); u != nil {
-			tid = u.TenantID
-		}
-		fillUser(m, tid)
-		menus, _ := dbx.Alive(dbx.Model("sa_system_user_menu")).Where("user_id", id).Fields("menu_id").Array()
+	m := dbx.ToMap(rec)
+	fillUsersBatch([]map[string]interface{}{m})
+	menus, _ := dbx.Alive(dbx.Model("sa_system_user_menu")).Where("user_id", id).Fields("menu_id").Array()
 	ids := []int{}
 	for _, v := range menus {
 		ids = append(ids, v.Int())
@@ -138,18 +188,23 @@ func Create(r *ghttp.Request) (interface{}, error) {
 	if tid <= 0 {
 		tid = 1
 	}
+	// 提权防护：仅超管可创建超管账号，普通管理员的 is_super 请求值一律丢弃。
+	isSuper := 0
+	if u.IsSuper {
+		isSuper = reqx.Int(m, "is_super")
+	}
 	// sa_system_user 表无 tenant_id 列，租户关联通过 sa_system_user_tenant 实现
 	id, err := dbx.Model(dao.Table).Data(g.Map{
 		"username": username, "password": h, "realname": reqx.Str(m, "realname", "nickname"),
 		"email": reqx.Str(m, "email"), "phone": reqx.Str(m, "phone"), "avatar": reqx.Str(m, "avatar"),
 		"gender": reqx.Str(m, "gender"), "dept_id": reqx.Int(m, "dept_id"), "status": 1,
-		"is_super": reqx.Int(m, "is_super"), "dashboard": "work",
+		"is_super": isSuper, "dashboard": "work",
 		"created_by": u.ID, "create_time": dbx.Now(), "update_time": dbx.Now(),
 	}).InsertAndGetId()
 	if err != nil {
 		return nil, err
 	}
-	if err = saveRels(int(id), tid, u.ID, m); err != nil {
+	if err = saveRels(r.Context(), int(id), tid, u.ID, m); err != nil {
 		return nil, err
 	}
 	cachex.InvalidateUserMenuTree(r.Context(), int(id), u.TenantID)
@@ -184,53 +239,56 @@ func Update(r *ghttp.Request) (interface{}, error) {
 		return nil, err
 	}
 	u := ctxuser.Must(r)
-	if err := saveRels(id, u.TenantID, u.ID, m); err != nil {
+	if err := saveRels(r.Context(), id, u.TenantID, u.ID, m); err != nil {
 		return nil, err
 	}
 	cachex.InvalidateUserMenuTree(r.Context(), id, u.TenantID)
 	return Detail(r)
 }
 
-func saveRels(uid, tid, by int, m g.Map) error {
+func saveRels(ctx context.Context, uid, tid, by int, m g.Map) error {
 	if tid <= 0 {
 		tid = 1
 	}
-	now := dbx.Now()
-	if _, ok := m["role_ids"]; ok {
-		if _, err := dbx.Alive(dbx.Model("sa_system_user_role")).Where("user_id", uid).Where("tenant_id", tid).
-			Data(g.Map{"delete_time": now}).Update(); err != nil {
-			return err
-		}
-		for _, rid := range reqx.Ints(m, "role_ids") {
-			if rid <= 0 {
-				continue
-			}
-			if _, err := dbx.Model("sa_system_user_role").Data(g.Map{
-				"user_id": uid, "role_id": rid, "tenant_id": tid, "status": 1,
-				"created_by": by, "updated_by": by, "create_time": now, "update_time": now,
-			}).Insert(); err != nil {
+	// 事务包裹「删旧插新」：中途失败整体回滚，避免角色/岗位关联丢失。
+	return g.DB().Transaction(ctx, func(ctx context.Context, tx gdb.TX) error {
+		now := dbx.Now()
+		if _, ok := m["role_ids"]; ok {
+			if _, err := tx.Ctx(ctx).Model("sa_system_user_role").Where("user_id", uid).Where("tenant_id", tid).
+				WhereNull("delete_time").Data(g.Map{"delete_time": now}).Update(); err != nil {
 				return err
 			}
-		}
-	}
-	if _, ok := m["post_ids"]; ok {
-		if _, err := dbx.Alive(dbx.Model("sa_system_user_post")).Where("user_id", uid).Where("tenant_id", tid).
-			Data(g.Map{"delete_time": now}).Update(); err != nil {
-			return err
-		}
-		for _, pid := range reqx.Ints(m, "post_ids") {
-			if pid <= 0 {
-				continue
+			for _, rid := range reqx.Ints(m, "role_ids") {
+				if rid <= 0 {
+					continue
+				}
+				if _, err := tx.Ctx(ctx).Model("sa_system_user_role").Data(g.Map{
+					"user_id": uid, "role_id": rid, "tenant_id": tid, "status": 1,
+					"created_by": by, "updated_by": by, "create_time": now, "update_time": now,
+				}).Insert(); err != nil {
+					return err
+				}
 			}
-			if _, err := dbx.Model("sa_system_user_post").Data(g.Map{
-				"user_id": uid, "post_id": pid, "tenant_id": tid, "status": 1,
-				"created_by": by, "updated_by": by, "create_time": now, "update_time": now,
-			}).Insert(); err != nil {
+		}
+		if _, ok := m["post_ids"]; ok {
+			if _, err := tx.Ctx(ctx).Model("sa_system_user_post").Where("user_id", uid).Where("tenant_id", tid).
+				WhereNull("delete_time").Data(g.Map{"delete_time": now}).Update(); err != nil {
 				return err
 			}
+			for _, pid := range reqx.Ints(m, "post_ids") {
+				if pid <= 0 {
+					continue
+				}
+				if _, err := tx.Ctx(ctx).Model("sa_system_user_post").Data(g.Map{
+					"user_id": uid, "post_id": pid, "tenant_id": tid, "status": 1,
+					"created_by": by, "updated_by": by, "create_time": now, "update_time": now,
+				}).Insert(); err != nil {
+					return err
+				}
+			}
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func Delete(r *ghttp.Request) (interface{}, error) {
@@ -238,16 +296,18 @@ func Delete(r *ghttp.Request) (interface{}, error) {
 	if id == 1 {
 		return nil, biz.Bad("不能删除超级管理员")
 	}
-	// sa_system_user 表无 tenant_id 列，使用 AssertTenantOwned 通过 user_tenant 关联校验
-	if !dbx.AssertTenantOwned(r, dao.Table, id) {
+	// sa_system_user 表没有 tenant_id 列（AssertTenantOwned 会生成不存在的 WHERE tenant_id，
+	// SQL 报错被吞后所有用户都删不掉），改走 sa_system_user_tenant 关联校验。
+	u := ctxuser.Get(r)
+	if u == nil {
 		return nil, biz.NotFound("用户不存在或无权操作")
 	}
-	u := ctxuser.Get(r)
-	tid := 0
-	if u != nil {
-		tid = u.TenantID
+	ut, err := dbx.Alive(dbx.Model("sa_system_user_tenant")).
+		Where("user_id", id).Where("tenant_id", u.TenantID).One()
+	if err != nil || ut.IsEmpty() {
+		return nil, biz.NotFound("用户不存在或无权操作")
 	}
-	cachex.InvalidateUserMenuTree(r.Context(), id, tid)
+	cachex.InvalidateUserMenuTree(r.Context(), id, u.TenantID)
 	return g.Map{}, dbx.SoftDelete(dao.Table, id)
 }
 
@@ -318,20 +378,27 @@ func SaveMenus(r *ghttp.Request) (interface{}, error) {
 	if tid <= 0 {
 		tid = 1
 	}
-	if _, err := dbx.Model("sa_system_user_menu").Where("user_id", id).Where("tenant_id", tid).Delete(); err != nil {
+	// 事务包裹「删旧插新」，避免中途失败导致用户菜单关联丢失。
+	err := g.DB().Transaction(r.Context(), func(ctx context.Context, tx gdb.TX) error {
+		if _, err := tx.Ctx(ctx).Model("sa_system_user_menu").Where("user_id", id).Where("tenant_id", tid).Delete(); err != nil {
+			return err
+		}
+		now := dbx.Now()
+		for _, mid := range ids {
+			if mid <= 0 {
+				continue
+			}
+			if _, err := tx.Ctx(ctx).Model("sa_system_user_menu").Data(g.Map{
+				"user_id": id, "menu_id": mid, "tenant_id": tid, "status": 1,
+				"created_by": u.ID, "updated_by": u.ID, "create_time": now, "update_time": now,
+			}).Insert(); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
-	}
-	now := dbx.Now()
-	for _, mid := range ids {
-		if mid <= 0 {
-			continue
-		}
-		if _, err := dbx.Model("sa_system_user_menu").Data(g.Map{
-			"user_id": id, "menu_id": mid, "tenant_id": tid, "status": 1,
-			"created_by": u.ID, "updated_by": u.ID, "create_time": now, "update_time": now,
-		}).Insert(); err != nil {
-			return nil, err
-		}
 	}
 	cachex.InvalidateUserMenuTree(r.Context(), id, u.TenantID)
 	return g.Map{}, nil

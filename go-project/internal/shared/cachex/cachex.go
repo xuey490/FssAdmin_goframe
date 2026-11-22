@@ -144,11 +144,8 @@ func configMap(ctx context.Context) (map[string]string, bool) {
 
 func Clear(ctx context.Context) int {
 	pat := conf.CachePrefix() + ":*"
-	v, err := g.Redis().Do(ctx, "KEYS", pat)
-	if err != nil || v == nil {
-		return 0
-	}
-	keys := v.Strings()
+	// SCAN 渐进式遍历代替 KEYS，键空间大时不再阻塞整个 Redis。
+	keys := scanCacheKeys(ctx, pat)
 	if len(keys) == 0 {
 		return 0
 	}
@@ -158,6 +155,29 @@ func Clear(ctx context.Context) int {
 	}
 	_, _ = g.Redis().Do(ctx, "DEL", args...)
 	return len(keys)
+}
+
+// scanCacheKeys 用 SCAN 逐批收集匹配键（与 authkit.scanKeys 同语义，这里保持包独立不互相依赖）。
+func scanCacheKeys(ctx context.Context, pattern string) []string {
+	var out []string
+	cursor := "0"
+	for {
+		v, err := g.Redis().Do(ctx, "SCAN", cursor, "MATCH", pattern, "COUNT", "200")
+		if err != nil {
+			return out
+		}
+		vars := v.Vars()
+		if len(vars) < 2 {
+			return out
+		}
+		cursor = vars[0].String()
+		for _, k := range vars[1].Vars() {
+			out = append(out, k.String())
+		}
+		if cursor == "0" || cursor == "" {
+			return out
+		}
+	}
 }
 
 func loadDict(ctx context.Context) (g.Map, error) {
@@ -216,7 +236,12 @@ func MenuTreeVersion(ctx context.Context) int {
 }
 
 // bumpMenuTreeVersion 递增版本号，写操作后调用使所有用户旧 key 失效。
+// 用 Redis INCR 原子自增：GET+SET 并发时丢更新会导致部分旧 key 不失效。
 func bumpMenuTreeVersion(ctx context.Context) {
+	if _, err := g.Redis().Do(ctx, "INCR", key(menuTreeVersionKey)); err == nil {
+		_, _ = g.Redis().Do(ctx, "EXPIRE", key(menuTreeVersionKey), versionTTL)
+		return
+	}
 	cur := MenuTreeVersion(ctx)
 	_ = Cache().Set(ctx, key(menuTreeVersionKey), cur+1, time.Duration(versionTTL)*time.Second)
 }

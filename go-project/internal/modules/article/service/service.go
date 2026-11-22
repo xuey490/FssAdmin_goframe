@@ -79,11 +79,9 @@ func Create(r *ghttp.Request) (interface{}, error) {
 	if uid > 0 {
 		data["created_by"] = uid
 	}
-	tid := datascope.CurrentTenantID(r)
-	if tid > 0 {
-		if reqx.Int(m, "tenant_id") == 0 {
-			data["tenant_id"] = tid
-		}
+	// tenant_id 一律服务端指定：采用前端值会允许把文章写进任意租户。
+	if tid := datascope.CurrentTenantID(r); tid > 0 {
+		data["tenant_id"] = tid
 	}
 	// 自动填充当前用户的部门 ID（如果前端未传 dept_id）
 	if did := datascope.CurrentDeptID(r); did > 0 {
@@ -92,6 +90,9 @@ func Create(r *ghttp.Request) (interface{}, error) {
 		}
 	}
 	for _, k := range spec.Allow {
+		if k == "tenant_id" {
+			continue
+		}
 		if v, ok := m[k]; ok {
 			data[k] = v
 		}
@@ -112,6 +113,9 @@ func Update(r *ghttp.Request) (interface{}, error) {
 		data["updated_by"] = uid
 	}
 	for _, k := range spec.Allow {
+		if k == "tenant_id" {
+			continue
+		}
 		if v, ok := m[k]; ok {
 			data[k] = v
 		}

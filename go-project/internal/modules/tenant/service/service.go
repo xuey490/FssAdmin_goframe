@@ -83,12 +83,31 @@ func AvailableUsers(r *ghttp.Request) (interface{}, error) {
 func AddUsers(r *ghttp.Request) (interface{}, error) {
 	tid := gconv.Int(r.Get("id"))
 	ids := reqx.Ints(reqx.Merge(r), "user_ids")
+	if tid <= 0 || len(ids) == 0 {
+		return g.Map{}, nil
+	}
 	u := ctxuser.Must(r)
+	// 批量去重：一次查出已关联的用户，避免循环内逐条 One()+Insert() 的 N+1。
+	existRows, _ := dbx.Alive(dbx.Model("sa_system_user_tenant")).
+		Where("tenant_id", tid).WhereIn("user_id", ids).Fields("user_id").All()
+	exist := map[int]struct{}{}
+	for _, rec := range existRows {
+		exist[rec["user_id"].Int()] = struct{}{}
+	}
+	now := dbx.Now()
 	for _, uid := range ids {
-		exist, _ := dbx.Alive(dbx.Model("sa_system_user_tenant")).Where("user_id", uid).Where("tenant_id", tid).One()
-		if exist.IsEmpty() {
-			_, _ = dbx.Model("sa_system_user_tenant").Data(g.Map{"user_id": uid, "tenant_id": tid, "created_by": u.ID, "create_time": dbx.Now(), "status": 1}).Insert()
+		if uid <= 0 {
+			continue
 		}
+		if _, ok := exist[uid]; ok {
+			continue
+		}
+		if _, err := dbx.Model("sa_system_user_tenant").Data(g.Map{
+			"user_id": uid, "tenant_id": tid, "created_by": u.ID, "create_time": now, "status": 1,
+		}).Insert(); err != nil {
+			return nil, err
+		}
+		exist[uid] = struct{}{}
 	}
 	return g.Map{}, nil
 }
