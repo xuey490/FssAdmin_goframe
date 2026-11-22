@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fssadmin/go-project/internal/middleware"
 	"fssadmin/go-project/internal/modules/dept/service"
 	"fssadmin/go-project/internal/shared/webx"
 
@@ -12,10 +13,10 @@ func Bind(g *ghttp.RouterGroup) {
 	g.GET("/system/dept/list", webx.Wrap(service.List))
 	g.GET("/system/dept/tree", webx.Wrap(service.Tree))
 	g.GET("/system/dept/detail/:id", webx.Wrap(service.Detail))
-	g.POST("/system/dept/create", webx.Wrap(service.Create))
-	g.PUT("/system/dept/update/:id", webx.Wrap(service.Update))
-	g.DELETE("/system/dept/delete/:id", webx.Wrap(service.Delete))
-	g.PUT("/system/dept/status/:id", webx.Wrap(service.Status))
 	g.GET("/system/dept/children/:id", webx.Wrap(service.Children))
 	g.GET("/system/dept/access-dept", webx.Wrap(service.AccessDept))
+	g.POST("/system/dept/create", middleware.Permission("core:dept:save"), webx.Wrap(service.Create))
+	g.PUT("/system/dept/update/:id", middleware.Permission("core:dept:update"), webx.Wrap(service.Update))
+	g.DELETE("/system/dept/delete/:id", middleware.Permission("core:dept:destroy"), webx.Wrap(service.Delete))
+	g.PUT("/system/dept/status/:id", middleware.Permission("core:dept:update"), webx.Wrap(service.Status))
 }
