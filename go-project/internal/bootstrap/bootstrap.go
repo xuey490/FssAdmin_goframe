@@ -53,6 +53,7 @@ func Bind(s *ghttp.Server) {
 	s.BindHookHandler("/*", ghttp.HookBeforeServe, middleware.RewriteAPIPrefix)
 	s.Use(
 		middleware.CORS,
+		middleware.StaticGuard,
 		middleware.CSRF,
 		middleware.IPBan,
 		middleware.RateLimit,

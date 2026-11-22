@@ -97,8 +97,19 @@ app:
   restoreFile: "static/restore/init.sql"
   maxFileSize: 10485760
   schedulerEnable: true
-  # 定时任务 shell_command 类型：允许在服务器执行 Shell 命令。置 false 可整体禁用该任务类型。
+  # 定时任务 shell_command 类型：允许在服务器执行 Shell 命令（等同 RCE，安全默认关闭）。
+  # 置 true 前请确保定时任务路由已有权限管控（tool:crontab:* 仅授给可信角色）。
   shellTaskEnable: true
+  # 登录失败锁定：同一 用户名+租户 连续失败 loginMaxFails 次后锁定 loginLockSeconds 秒。
+  loginMaxFails: 5
+  loginLockSeconds: 600
+  # 可信代理 CIDR/IP：仅当 TCP 对端命中此列表时才信任 X-Forwarded-For / X-Real-IP
+  # （取 XFF 最右侧一跳）。直连伪造的头一律忽略。本机 Nginx 反代保持默认即可。
+  # trustedProxies: "127.0.0.1,::1"
+  # 免登录可读的系统配置 key（/core/config/public/:key），其余一律 404。
+  # publicConfigKeys: "site_name,site_logo,site_desc,site_keywords,site_copyright,site_record_number"
+  # yt-dlp 下载/元数据抓取的最大并发进程数。
+  # videoMaxConcurrent: 2
   # IP 归属地（登录日志、在线用户「登录地点」）：
   # 开启后仅对公网 IP 请求外网接口查询，结果缓存；关闭后只标注「内网IP/未解析(已关闭归属地查询)」
   ipLocationEnable: false

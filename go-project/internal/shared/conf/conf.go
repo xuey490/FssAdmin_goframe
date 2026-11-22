@@ -48,7 +48,7 @@ func SessionType() string   { return get("app.sessionType", "jwt") }
 func CaptchaEnable() bool   { return getBool("app.captchaEnable", true) }
 func CaptchaExpire() int    { return getInt("app.captchaExpire", 600) }
 func DemoEnable() bool      { return getBool("app.demoEnable", false) }
-func Debug() bool           { return getBool("app.debug", true) }
+func Debug() bool           { return getBool("app.debug", false) }
 func CORSEnable() bool      { return getBool("app.corsEnable", true) }
 func CORSMaxAge() int       { return getInt("app.corsMaxAge", 600) }
 func CSRFEnable() bool      { return getBool("app.csrfEnable", true) }
@@ -75,8 +75,11 @@ func UploadPublicPrefix() string {
 	p = "/" + strings.Trim(p, "/")
 	return p
 }
-func VideoDir() string   { return get("app.videoDir", "static/videos") }
-func BackupDir() string  { return get("app.backupDir", "static/bakup") }
+func VideoDir() string { return get("app.videoDir", "static/videos") }
+
+// VideoMaxConcurrent 同一时刻 yt-dlp 下载/元数据抓取的最大并发进程数。
+func VideoMaxConcurrent() int { return getInt("app.videoMaxConcurrent", 2) }
+func BackupDir() string       { return get("app.backupDir", "static/bakup") }
 func BackupCron() string { return get("app.backupCron", "0 0 2 * * *") }
 func RestoreFile() string {
 	return get("app.restoreFile", "static/restore/init.sql")
@@ -91,8 +94,26 @@ func CachePrefix() string {
 }
 func LogStack() bool { return getInt("logger.stStatus", 1) != 0 }
 
-// ShellTaskEnable 是否允许 shell_command 任务类型执行服务器命令（默认开启，走权限+审计控制）。
-func ShellTaskEnable() bool { return getBool("app.shellTaskEnable", true) }
+// ShellTaskEnable 是否允许 shell_command 任务类型执行服务器命令。
+// 安全默认关闭：shell 任务等同 RCE，须显式开启并配合权限中间件 + 超管身份。
+func ShellTaskEnable() bool { return getBool("app.shellTaskEnable", false) }
+
+// TrustedProxies 可信代理 CIDR/IP 列表。
+// 仅当直连地址命中该列表时才信任 X-Forwarded-For / X-Real-IP，
+// 默认信任本机回环（本机 Nginx 反代的典型部署）；直连客户端伪造的头会被忽略。
+func TrustedProxies() []string { return csv("app.trustedProxies", "127.0.0.1,::1") }
+
+// PublicConfigKeys 允许免登录读取的系统配置 key（/core/config/public/:key）。
+// 未列入的 key 一律拒绝，防止枚举 SMTP 密码等敏感配置。
+func PublicConfigKeys() []string {
+	return csv("app.publicConfigKeys", "site_name,site_logo,site_desc,site_keywords,site_copyright,site_record_number")
+}
+
+// LoginMaxFails 连续登录失败锁定阈值（按 用户名+租户 维度计数，Redis）。
+func LoginMaxFails() int { return getInt("app.loginMaxFails", 5) }
+
+// LoginLockSeconds 登录失败达到阈值后的锁定秒数。
+func LoginLockSeconds() int { return getInt("app.loginLockSeconds", 600) }
 
 // IP 归属地解析：登录/在线用户列表用。
 // 关闭后不再请求外网，仅标注「内网IP」或「未解析(已关闭归属地查询)」。
