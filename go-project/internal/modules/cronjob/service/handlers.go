@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -15,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"fssadmin/go-project/internal/shared/conf"
+	"fssadmin/go-project/internal/shared/ctxuser"
 	"fssadmin/go-project/internal/shared/dbx"
 
 	"github.com/gogf/gf/v2/frame/g"
@@ -392,13 +395,57 @@ func logCleanupHandler(ctx context.Context, t *Task) (interface{}, error) {
 	}), nil
 }
 
+// ssrfSafeURL 校验 http_request 任务的 URL：
+// 仅允许 http/https，且解析出的目标 IP 不得为环回/私网/链路本地，
+// 防止把任务执行器当 SSRF 跳板探测内网（元数据服务、Redis/MySQL 等）。
+func ssrfSafeURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("URL 解析失败：%v", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return errors.New("请求地址必须以 http:// 或 https:// 开头")
+	}
+	host := u.Hostname()
+	if host == "" {
+		return errors.New("URL 缺少主机名")
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if !publicIP(ip) {
+			return fmt.Errorf("禁止请求内网/保留地址：%s", host)
+		}
+		return nil
+	}
+	addrs, err := net.LookupHost(host)
+	if err != nil {
+		return fmt.Errorf("域名解析失败：%v", err)
+	}
+	for _, a := range addrs {
+		if ip := net.ParseIP(a); ip != nil && !publicIP(ip) {
+			return fmt.Errorf("禁止请求内网/保留地址：%s -> %s", host, a)
+		}
+	}
+	return nil
+}
+
+func publicIP(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified() || ip.IsMulticast() {
+		return false
+	}
+	return true
+}
+
+// ssrfGuard 可替换的安全校验缝隙（测试用），生产始终为 ssrfSafeURL。
+var ssrfGuard = ssrfSafeURL
+
 func httpRequestHandler(ctx context.Context, t *Task) (interface{}, error) {
 	url := t.Str("url")
 	if url == "" {
 		return nil, errors.New("缺少请求地址 url")
 	}
-	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-		return nil, errors.New("请求地址必须以 http:// 或 https:// 开头")
+	if err := ssrfGuard(url); err != nil {
+		return nil, err
 	}
 	method := strings.ToUpper(t.Str("method"))
 	if method == "" {
@@ -418,7 +465,14 @@ func httpRequestHandler(ctx context.Context, t *Task) (interface{}, error) {
 	if req.Header.Get("Content-Type") == "" && body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := (&http.Client{}).Do(req)
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+		// 不跟随重定向：重定向目标不再经过 SSRF 校验，可能被 302 跳进内网。
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("请求失败：%v", ctx.Err())
@@ -445,6 +499,10 @@ func httpRequestHandler(ctx context.Context, t *Task) (interface{}, error) {
 func shellCommandHandler(ctx context.Context, t *Task) (interface{}, error) {
 	if !conf.ShellTaskEnable() {
 		return nil, errors.New("Shell 任务已禁用，请在 config.yaml 中设置 app.shellTaskEnable = true")
+	}
+	// shell 任务等同 RCE：除权限中间件外，仅超管身份可执行（调度触发无用户身份时同样拒绝）。
+	if u, ok := ctxuser.FromCtx(ctx); !ok || !u.IsSuper {
+		return nil, errors.New("Shell 任务仅允许超级管理员执行")
 	}
 	command := t.Str("command")
 	if command == "" {

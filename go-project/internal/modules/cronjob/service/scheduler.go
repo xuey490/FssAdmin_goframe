@@ -586,6 +586,16 @@ func syncNode(ctx context.Context, nodeID int, deleted bool) {
 		return
 	}
 	id := strconv.Itoa(nodeID)
+	// DB 查询放在全局锁外：stateMu 同时保护所有读接口（快照/列表），
+	// 锁内做慢查询会把整个调度器读面拖住。
+	var rec gdb.Record
+	if !deleted {
+		var err error
+		rec, err = dao.NodeModel().Ctx(ctx).Where("id", nodeID).One()
+		if err != nil {
+			return
+		}
+	}
 	stateMu.Lock()
 	defer stateMu.Unlock()
 	if schedState == "停止" {
@@ -596,8 +606,7 @@ func syncNode(ctx context.Context, nodeID int, deleted bool) {
 	if deleted {
 		return
 	}
-	rec, err := dao.NodeModel().Ctx(ctx).Where("id", nodeID).One()
-	if err != nil || rec.IsEmpty() || rec["status"].Int() != 0 {
+	if rec.IsEmpty() || rec["status"].Int() != 0 {
 		return
 	}
 	m := buildMeta(rec)
@@ -823,8 +832,12 @@ func TaskPause(r *ghttp.Request) (interface{}, error) {
 func TaskResume(r *ghttp.Request) (interface{}, error) {
 	id := r.Get("jobId").String()
 	rec, err := dao.NodeModel().Where("id", id).One()
-	if err != nil || rec.IsEmpty() {
-		return g.Map{}, err
+	if err != nil {
+		return nil, err
+	}
+	// 节点不存在要报 404，而不是静默返回成功误导前端。
+	if rec.IsEmpty() {
+		return nil, biz.NotFound("任务节点不存在")
 	}
 	stateMu.Lock()
 	if schedState == "停止" {

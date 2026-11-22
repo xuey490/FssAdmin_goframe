@@ -38,6 +38,32 @@ var (
 	speedRe    = regexp.MustCompile(`at\s+(\S+/s)`)
 )
 
+// 并发上限：下载与元数据抓取各自一个信号量池，防止批量任务把 yt-dlp 进程开爆。
+var (
+	dlSemOnce   sync.Once
+	downloadSem chan struct{}
+	metaSemOnce sync.Once
+	metaSem     chan struct{}
+)
+
+func slotPool(once *sync.Once, ch *chan struct{}, n int) chan struct{} {
+	once.Do(func() {
+		if n < 1 {
+			n = 1
+		}
+		*ch = make(chan struct{}, n)
+	})
+	return *ch
+}
+
+func downloadSlot() chan struct{} {
+	return slotPool(&dlSemOnce, &downloadSem, conf.VideoMaxConcurrent())
+}
+
+func metaSlot() chan struct{} {
+	return slotPool(&metaSemOnce, &metaSem, conf.VideoMaxConcurrent())
+}
+
 func EnsureBin() (string, error) {
 	binOnce.Do(func() {
 		if p := os.Getenv("FSSADMIN_YTDLP_BIN"); p != "" {
@@ -65,6 +91,9 @@ func EnsureBin() (string, error) {
 }
 
 func fetchMeta(videoID int, url string) {
+	sem := metaSlot()
+	sem <- struct{}{}
+	defer func() { <-sem }()
 	bin, err := EnsureBin()
 	if err != nil {
 		_, _ = dao.Model().Where("id", videoID).Data(g.Map{
@@ -74,7 +103,8 @@ func fetchMeta(videoID int, url string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "-J", "--no-warnings", "--no-download", url)
+	// "--" 终止选项解析：防止以 "-" 开头的 URL 被当作 yt-dlp 选项（如 --exec）。
+	cmd := exec.CommandContext(ctx, bin, "-J", "--no-warnings", "--no-download", "--", url)
 	out, err := cmd.Output()
 	if err != nil {
 		msg := err.Error()
@@ -142,6 +172,10 @@ func slimInfo(info map[string]interface{}) map[string]interface{} {
 }
 
 func startDownload(jobID, videoID int, url, mode string, opts map[string]interface{}) {
+	// 并发上限：排队等待空闲槽位，避免每个请求无限开 yt-dlp 进程。
+	sem := downloadSlot()
+	sem <- struct{}{}
+	defer func() { <-sem }()
 	bin, err := EnsureBin()
 	if err != nil {
 		failJob(jobID, videoID, err.Error())
@@ -169,19 +203,25 @@ func startDownload(jobID, videoID int, url, mode string, opts map[string]interfa
 			args = append(args, "-f", "bv*+ba/b")
 		}
 	}
-	args = append(args, url)
-	ctx, cancel := context.WithCancel(context.Background())
+	// "--" 终止选项解析，防 URL 被当作 yt-dlp 选项注入。
+	args = append(args, "--", url)
+	// 单个下载总超时 2 小时：挂死的下载不再永久占用槽位与进程。
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, args...)
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
-	if err := cmd.Start(); err != nil {
-		cancel()
-		failJob(jobID, videoID, err.Error())
-		return
-	}
+	// 先占位注册 cancel，再启动进程：消除 pause/stop 查不到 cancel 的窗口竞态。
 	jobsMu.Lock()
 	jobs[jobID] = &runningJob{cmd: cmd, cancel: cancel}
 	jobsMu.Unlock()
+	if err := cmd.Start(); err != nil {
+		jobsMu.Lock()
+		delete(jobs, jobID)
+		jobsMu.Unlock()
+		failJob(jobID, videoID, err.Error())
+		return
+	}
 	_, _ = dao.JobModel().Where("id", jobID).Data(g.Map{
 		"status": 1, "local_dir": dir, "started_at": dbx.Now(), "update_time": dbx.Now(),
 	}).Update()
@@ -194,17 +234,20 @@ func startDownload(jobID, videoID int, url, mode string, opts map[string]interfa
 	jobsMu.Lock()
 	delete(jobs, jobID)
 	jobsMu.Unlock()
-	cancel()
+	if ctx.Err() == context.DeadlineExceeded {
+		g.Log().Warningf(ctx, "[video-dl job=%d] timeout", jobID)
+		failJob(jobID, videoID, "下载超时（2 小时）")
+		return
+	}
 	if ctx.Err() == context.Canceled {
-		fmt.Fprintf(os.Stderr, "\r[video-dl job=%d] canceled\n", jobID)
+		g.Log().Infof(ctx, "[video-dl job=%d] canceled", jobID)
 		return
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "\r[video-dl job=%d] fail %s\n", jobID, err)
+		g.Log().Warningf(ctx, "[video-dl job=%d] fail %s", jobID, err)
 		failJob(jobID, videoID, err.Error())
 		return
 	}
-	fmt.Fprintf(os.Stderr, "\r[video-dl job=%d] 100.0%% done\n", jobID)
 	g.Log().Infof(ctx, "[video-dl job=%d] 100%% done", jobID)
 	_, _ = dao.JobModel().Where("id", jobID).Data(g.Map{
 		"status": 3, "progress": 100, "finished_at": dbx.Now(), "update_time": dbx.Now(),
@@ -218,6 +261,7 @@ func parseProgress(jobID int, r io.Reader) {
 	sc := bufio.NewScanner(r)
 	lastPct := -1
 	var lastPrint time.Time
+	var lastDB time.Time
 	for sc.Scan() {
 		line := sc.Text()
 		prog := 0.0
@@ -228,21 +272,24 @@ func parseProgress(jobID int, r io.Reader) {
 		if m := speedRe.FindStringSubmatch(line); len(m) > 1 {
 			speed = m[1]
 		}
-		data := g.Map{"update_time": dbx.Now()}
 		if prog > 0 {
-			data["progress"] = prog
 			pct := int(prog)
 			now := time.Now()
 			// ponytail: \r 同行刷新；1% 或 300ms 节流，避免刷屏
 			if pct != lastPct || now.Sub(lastPrint) >= 300*time.Millisecond {
 				lastPct = pct
 				lastPrint = now
-				if speed != "" {
-					fmt.Fprintf(os.Stderr, "\r[video-dl job=%d] %5.1f%%  %s    ", jobID, prog, speed)
-				} else {
-					fmt.Fprintf(os.Stderr, "\r[video-dl job=%d] %5.1f%%         ", jobID, prog)
-				}
 			}
+		}
+		// DB 进度写节流：yt-dlp --newline 每个分片都输出一行，逐行 UPDATE 会形成写风暴。
+		now := time.Now()
+		if now.Sub(lastDB) < 300*time.Millisecond {
+			continue
+		}
+		lastDB = now
+		data := g.Map{"update_time": dbx.Now()}
+		if prog > 0 {
+			data["progress"] = prog
 		}
 		if speed != "" {
 			data["speed"] = speed

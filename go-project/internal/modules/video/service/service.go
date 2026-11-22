@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +24,49 @@ import (
 	"github.com/gogf/gf/v2/net/ghttp"
 	"github.com/gogf/gf/v2/util/gconv"
 )
+
+// validVideoURL 视频地址安全校验：
+//  1. 仅允许 http/https（防 file:// 等协议交给 yt-dlp）；
+//  2. 目标 IP 不得为环回/私网/链路本地，防服务端 SSRF 借 yt-dlp 探测内网；
+//  3. 不能以 "-" 开头（防注入 yt-dlp 命令行选项，如 --exec）。
+func validVideoURL(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return biz.Bad("url 不能为空")
+	}
+	if strings.HasPrefix(raw, "-") {
+		return biz.Bad("非法的 url")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return biz.Bad("url 必须以 http:// 或 https:// 开头")
+	}
+	host := u.Hostname()
+	if host == "" {
+		return biz.Bad("url 缺少主机名")
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if !publicIP(ip) {
+			return biz.Bad("禁止解析内网/保留地址的视频链接")
+		}
+		return nil
+	}
+	addrs, err := net.LookupHost(host)
+	if err != nil {
+		return biz.Bad("域名解析失败")
+	}
+	for _, a := range addrs {
+		if ip := net.ParseIP(a); ip != nil && !publicIP(ip) {
+			return biz.Bad("禁止解析内网/保留地址的视频链接")
+		}
+	}
+	return nil
+}
+
+func publicIP(ip net.IP) bool {
+	return !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsUnspecified() || ip.IsMulticast())
+}
 
 func List(r *ghttp.Request) (interface{}, error) {
 	pg, limit := page.Parse(r)
@@ -130,6 +175,9 @@ func Create(r *ghttp.Request) (interface{}, error) {
 		if url == "" {
 			continue
 		}
+		if err := validVideoURL(url); err != nil {
+			return nil, err
+		}
 		id, err := dbx.Model(dao.Table).Data(g.Map{
 			"url": url, "status": 0, "tenant_id": tid,
 			"create_time": dbx.Now(), "update_time": dbx.Now(),
@@ -150,8 +198,8 @@ func Create(r *ghttp.Request) (interface{}, error) {
 func Update(r *ghttp.Request) (interface{}, error) {
 	id := r.Get("id").Int()
 	url := reqx.Str(reqx.Merge(r), "url")
-	if url == "" {
-		return nil, biz.Bad("url 必填")
+	if err := validVideoURL(url); err != nil {
+		return nil, err
 	}
 	_, err := dao.Model().Where("id", id).Data(g.Map{
 		"url": url, "status": 0, "title": nil, "error_msg": nil, "update_time": dbx.Now(),

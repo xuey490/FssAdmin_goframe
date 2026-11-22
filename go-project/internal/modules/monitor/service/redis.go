@@ -100,8 +100,27 @@ func redisScan(ctx context.Context, pattern string) []string {
 	return keys
 }
 
+// sensitiveKeyPrefixes 会话/验证码等安全敏感键：浏览器里一律脱敏展示、禁止查看原值。
+// 之前 BrowserKeyInfo 可读出 token:session:<sid> 的原始 JWT，等于把超管会话交给任何有 Redis 浏览器权限的人。
+var sensitiveKeyPrefixes = []string{"token:", "captcha:", "login:fail:"}
+
+func isSensitiveKey(key string) bool {
+	for _, p := range sensitiveKeyPrefixes {
+		if strings.HasPrefix(key, p) {
+			return true
+		}
+	}
+	return false
+}
+
 func RedisKeys(r *ghttp.Request) (interface{}, error) {
-	return redisScan(r.Context(), r.Get("pattern", "*").String()), nil
+	keys := redisScan(r.Context(), r.Get("pattern", "*").String())
+	for i, k := range keys {
+		if isSensitiveKey(k) {
+			keys[i] = strings.Split(k, ":")[0] + ":<protected>"
+		}
+	}
+	return keys, nil
 }
 
 func RedisDeleteKeys(r *ghttp.Request) (interface{}, error) {
@@ -110,7 +129,15 @@ func RedisDeleteKeys(r *ghttp.Request) (interface{}, error) {
 	if k := reqx.Str(m, "key"); k != "" {
 		keys = append(keys, k)
 	}
-	return g.Map{"deleted": delKeys(r.Context(), keys)}, nil
+	// 会话/验证码键禁止通过 Redis 浏览器删除（否则可反制强制下线、消耗验证码）。
+	safe := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if isSensitiveKey(k) {
+			continue
+		}
+		safe = append(safe, k)
+	}
+	return g.Map{"deleted": delKeys(r.Context(), safe)}, nil
 }
 
 func delKeys(ctx context.Context, keys []string) int {
@@ -249,6 +276,10 @@ func redisValue(ctx context.Context, key, typ string) interface{} {
 
 func BrowserKeyInfo(r *ghttp.Request) (interface{}, error) {
 	key := r.Get("key").String()
+	// 敏感键（token:/captcha: 等）只返回元信息，不返回原值。
+	if isSensitiveKey(key) {
+		return g.Map{"key": key, "protected": true, "value": "<敏感键已脱敏，禁止读取>"}, nil
+	}
 	typ := redisType(r.Context(), key)
 	ttl, _ := g.Redis().Do(r.Context(), "TTL", key)
 	return g.Map{
@@ -261,10 +292,16 @@ func BrowserDelete(r *ghttp.Request) (interface{}, error) {
 	m := reqx.Merge(r)
 	if pat := reqx.Str(m, "pattern"); pat != "" {
 		keys := redisScan(r.Context(), pat)
-		return g.Map{"deleted": delKeys(r.Context(), keys)}, nil
+		safe := make([]string, 0, len(keys))
+		for _, k := range keys {
+			if !isSensitiveKey(k) {
+				safe = append(safe, k)
+			}
+		}
+		return g.Map{"deleted": delKeys(r.Context(), safe)}, nil
 	}
 	key := reqx.Str(m, "key")
-	if key == "" {
+	if key == "" || isSensitiveKey(key) {
 		return g.Map{"deleted": 0}, nil
 	}
 	return g.Map{"deleted": delKeys(r.Context(), []string{key})}, nil

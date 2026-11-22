@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"net/url"
 	"time"
 
 	"fssadmin/go-project/internal/authkit"
@@ -17,11 +18,21 @@ type envelope struct {
 }
 
 func Handle(r *ghttp.Request) {
+	// 跨站 WebSocket 防护：Origin 存在且与 Host 不一致时拒绝握手。
+	// gf 默认 upgrader CheckOrigin 恒 true，这里在应用层补上校验。
+	if origin := r.Header.Get("Origin"); origin != "" {
+		if u, err := url.Parse(origin); err == nil && u.Host != "" && u.Host != r.Host {
+			r.Response.WriteStatus(403)
+			return
+		}
+	}
 	ws, err := r.WebSocket()
 	if err != nil {
 		r.Response.WriteStatus(400)
 		return
 	}
+	// 单条消息上限 64KB：gorilla 默认 0 = 不限制，恶意大帧可打爆内存。
+	ws.SetReadLimit(64 << 10)
 	authed := false
 	_ = ws.SetReadDeadline(time.Now().Add(20 * time.Second))
 	for {
@@ -76,5 +87,7 @@ func extractToken(data interface{}) string {
 
 func writeWS(ws *ghttp.WebSocket, event string, data interface{}) error {
 	b, _ := json.Marshal(envelope{Event: event, Data: data})
+	// 写超时：慢客户端不能长期挂住连接与写阻塞。
+	_ = ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	return ws.WriteMessage(1, b)
 }
